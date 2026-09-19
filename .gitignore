@@ -1,0 +1,11 @@
+# NUNCA subir archivos de entorno reales
+*.env
+!*.env.example
+!laboratorio/entornos/*.env.example
+
+# claves
+*.pem
+*.key
+
+__pycache__/
+.venv/
