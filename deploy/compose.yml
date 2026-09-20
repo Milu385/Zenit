@@ -1,0 +1,47 @@
+name: zenit-plataforma
+
+services:
+  ingesta:
+    image: ghcr.io/${ORG_GITHUB}/zenit-ingesta:${VERSION_INGESTA:-0.1.0}
+    restart: unless-stopped
+    environment:
+      ZENIT_ENTORNO:   ${ZENIT_ENTORNO:-desconocido}
+      ZENIT_PROVEEDOR: ${ZENIT_PROVEEDOR:-desconocido}
+      ZENIT_REGION:    ${ZENIT_REGION:-desconocido}
+      RUTA_SALIDA:     /datos/salida
+      RUTA_CATALOGO:   /etc/zenit/catalogo.json
+      TOKEN_INGESTA:   ${TOKEN_INGESTA:?falta el token de ingesta}
+    volumes:
+      - ingesta_datos:/datos          # volumen nombrado, no ruta del anfitrion
+      - ./catalogo.json:/etc/zenit/catalogo.json:ro
+    ports:
+      - "127.0.0.1:8080:8080"         # salud y metricas: solo desde dentro
+    # 4317 NO se publica: solo lo alcanza el borde, por la red interna
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://localhost:8080/salud')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  borde:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      ingesta:
+        condition: service_healthy
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./tls/servidor.crt:/etc/nginx/tls/servidor.crt:ro
+      - ./tls/servidor.key:/etc/nginx/tls/servidor.key:ro
+    ports:
+      - "0.0.0.0:4317:4317"           # el unico puerto abierto al mundo
+    healthcheck:
+      test: ["CMD-SHELL", "nginx -t || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  ingesta_datos:                       # lo administra Docker, sobrevive al reinicio

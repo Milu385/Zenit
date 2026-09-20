@@ -9,3 +9,5 @@
 
 __pycache__/
 .venv/
+tls/*.srl
+tls/servidor.crt
