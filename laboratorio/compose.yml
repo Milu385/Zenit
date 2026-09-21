@@ -1,0 +1,114 @@
+name: zenit-laboratorio
+
+x-recursos: &recursos
+  deploy:
+    resources:
+      limits:
+        cpus:   "${LIMITE_CPU:-1.0}"
+        memory: "${LIMITE_MEMORIA:-512m}"
+
+x-identidad: &identidad
+  ZENIT_ENTORNO:   ${ZENIT_ENTORNO:-desconocido}
+  ZENIT_PROVEEDOR: ${ZENIT_PROVEEDOR:-desconocido}
+  ZENIT_REGION:    ${ZENIT_REGION:-desconocido}
+
+services:
+
+  almacen:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${ALMACEN_USUARIO:-zenit}
+      POSTGRES_PASSWORD: ${ALMACEN_CLAVE:?falta ALMACEN_CLAVE}
+      POSTGRES_DB:       ${ALMACEN_BD:-zenit}
+    volumes:
+      - almacen_datos:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ALMACEN_USUARIO:-zenit} -d ${ALMACEN_BD:-zenit}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    <<: *recursos
+    # sin perfil: es la base de todo, siempre arranca
+
+  catalogo:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-catalogo:${VERSION_APP:-0.1.0}
+    build: ./servicios/catalogo
+    restart: unless-stopped
+    depends_on:
+      almacen:
+        condition: service_healthy
+    environment:
+      <<: *identidad
+      ALMACEN_USUARIO: ${ALMACEN_USUARIO:-zenit}
+      ALMACEN_CLAVE:   ${ALMACEN_CLAVE:?falta ALMACEN_CLAVE}
+      ALMACEN_BD:      ${ALMACEN_BD:-zenit}
+      OTEL_SERVICE_NAME: catalogo
+      OTEL_TRACES_EXPORTER: ${EXPORTADOR_TRAZAS:-none}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://agente:4317
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/salud')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    <<: *recursos
+    profiles: ["completo"]
+
+  pedidos:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-pedidos:${VERSION_APP:-0.1.0}
+    build: ./servicios/pedidos
+    restart: unless-stopped
+    depends_on:
+      almacen:
+        condition: service_healthy
+    environment:
+      <<: *identidad
+      URL_CATALOGO: http://catalogo:8000
+      OTEL_SERVICE_NAME: pedidos
+      OTEL_TRACES_EXPORTER: ${EXPORTADOR_TRAZAS:-none}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://agente:4317
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/salud')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    <<: *recursos
+
+  carga:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-carga:${VERSION_APP:-0.1.0}
+    build: ./servicios/carga
+    restart: unless-stopped
+    depends_on: [pedidos]
+    environment:
+      URL_PEDIDOS:       http://pedidos:8000/pedidos
+      CARGA_RPS:         ${CARGA_RPS:-5}
+      CARGA_CONCURRENCIA: ${CARGA_CONCURRENCIA:-4}
+      CARGA_DURACION:    ${CARGA_DURACION:-0}
+    profiles: ["carga"]
+
+  agente:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/collector.yaml"]
+    environment:
+      <<: *identidad
+      DESTINO_OTLP:     ${DESTINO_OTLP:?falta el destino de telemetria}
+      OTLP_INSEGURO:    ${OTLP_INSEGURO:-false}
+      RUTA_CA:          ${RUTA_CA:-/etc/otelcol/ca.crt}
+      TOKEN_INGESTA:    ${TOKEN_INGESTA:?falta el token de ingesta}
+      INTERVALO_METRICAS: ${INTERVALO_METRICAS:-15s}
+    volumes:
+      - ./agente/collector.yaml:/etc/otelcol/collector.yaml:ro
+      - ./agente/ca.crt:/etc/otelcol/ca.crt:ro   # publico: va versionado
+      - agente_cola:/var/lib/otelcol/cola
+      - /:/hostfs:ro,rslave
+    pid: host
+    profiles: ["observado"]
+
+volumes:
+  almacen_datos:
+  agente_cola:
