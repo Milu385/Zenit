@@ -1,0 +1,84 @@
+receivers:
+  hostmetrics:
+    collection_interval: ${env:INTERVALO_METRICAS}
+    root_path: /hostfs
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      load:
+      disk:
+      filesystem:
+      network:
+      paging:
+      processes:
+
+  # las trazas de la aplicacion entran por aqui
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  # los atributos que cambian entre entornos entran por variables,
+  # no editando este archivo
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: ${env:ZENIT_ENTORNO}
+        action: upsert
+      - key: cloud.provider
+        value: ${env:ZENIT_PROVEEDOR}
+        action: upsert
+      - key: cloud.region
+        value: ${env:ZENIT_REGION}
+        action: upsert
+
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+
+extensions:
+  # la cola persistente vive aqui
+  file_storage/cola:
+    directory: /var/lib/otelcol/cola
+    timeout: 10s
+
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+exporters:
+  otlp:
+    endpoint: ${env:DESTINO_OTLP}
+    headers:
+      authorization: "Bearer ${env:TOKEN_INGESTA}"
+    tls:
+      insecure: ${env:OTLP_INSEGURO}
+      ca_file: ${env:RUTA_CA}
+    sending_queue:
+      enabled: true
+      storage: file_storage/cola     # <-- sin esto la cola es solo memoria
+      num_consumers: 4
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 60s
+      max_elapsed_time: 900s
+
+service:
+  extensions: [file_storage/cola, health_check]
+  pipelines:
+    metrics:
+      receivers:  [hostmetrics, otlp]
+      processors: [resource, batch]
+      exporters:  [otlp]
+    traces:
+      receivers:  [otlp]
+      processors: [resource, batch]
+      exporters:  [otlp]
