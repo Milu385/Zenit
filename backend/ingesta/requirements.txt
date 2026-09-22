@@ -1,0 +1,2 @@
+grpcio==1.68.1
+opentelemetry-proto==1.29.0

@@ -3,6 +3,7 @@ name: zenit-plataforma
 services:
   ingesta:
     image: ghcr.io/${ORG_GITHUB}/zenit-ingesta:${VERSION_INGESTA:-0.1.0}
+    build: ../backend/ingesta          # la plataforma la construye ella misma
     restart: unless-stopped
     environment:
       ZENIT_ENTORNO:   ${ZENIT_ENTORNO:-desconocido}

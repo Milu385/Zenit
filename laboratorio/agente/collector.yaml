@@ -38,6 +38,10 @@ processors:
       - key: cloud.region
         value: ${env:ZENIT_REGION}
         action: upsert
+      # identidad del nodo: la clave que la plataforma busca en su catalogo
+      - key: host.name
+        value: ${env:ZENIT_NODO}
+        action: upsert
 
   batch:
     timeout: 5s
