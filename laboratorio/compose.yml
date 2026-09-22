@@ -11,6 +11,7 @@ x-identidad: &identidad
   ZENIT_ENTORNO:   ${ZENIT_ENTORNO:-desconocido}
   ZENIT_PROVEEDOR: ${ZENIT_PROVEEDOR:-desconocido}
   ZENIT_REGION:    ${ZENIT_REGION:-desconocido}
+  ZENIT_NODO:      ${ZENIT_NODO:?falta el nombre del nodo}
 
 services:
 
@@ -35,6 +36,7 @@ services:
     image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-catalogo:${VERSION_APP:-0.1.0}
     build: ./servicios/catalogo
     restart: unless-stopped
+    init: true             # reenvia SIGTERM: apagado en ~1 s, no en 10
     depends_on:
       almacen:
         condition: service_healthy
@@ -59,6 +61,7 @@ services:
     image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-pedidos:${VERSION_APP:-0.1.0}
     build: ./servicios/pedidos
     restart: unless-stopped
+    init: true             # reenvia SIGTERM: apagado en ~1 s, no en 10
     depends_on:
       almacen:
         condition: service_healthy
@@ -69,7 +72,7 @@ services:
       OTEL_TRACES_EXPORTER: ${EXPORTADOR_TRAZAS:-none}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://agente:4317
     ports:
-      - "127.0.0.1:8000:8000"
+      - "${IP_PEDIDOS:-127.0.0.1}:8000:8000"   # on-premise la cambia por variable
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/salud')\""]
       interval: 10s
@@ -82,6 +85,7 @@ services:
     image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-carga:${VERSION_APP:-0.1.0}
     build: ./servicios/carga
     restart: unless-stopped
+    init: true             # reenvia SIGTERM: apagado en ~1 s, no en 10
     depends_on: [pedidos]
     environment:
       URL_PEDIDOS:       http://pedidos:8000/pedidos
