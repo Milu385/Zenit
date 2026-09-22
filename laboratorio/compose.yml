@@ -96,6 +96,7 @@ services:
 
   agente:
     image: otel/opentelemetry-collector-contrib:0.116.1
+    user: "0:0"                # escribe en su volumen y lee /proc de todos los procesos
     restart: unless-stopped
     command: ["--config=/etc/otelcol/collector.yaml"]
     environment:
