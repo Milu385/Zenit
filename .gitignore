@@ -11,3 +11,11 @@ __pycache__/
 .venv/
 tls/*.srl
 tls/servidor.crt
+
+# token de administracion de InfluxDB (lo crea scripts/influx/preparar-token.sh)
+deploy/secretos/
+deploy/tls/
+
+.pytest_cache/
+node_modules/
+frontend/dist/
