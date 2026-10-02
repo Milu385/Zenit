@@ -105,7 +105,7 @@ services:
       OTLP_INSEGURO:    ${OTLP_INSEGURO:-false}
       RUTA_CA:          ${RUTA_CA:-/etc/otelcol/ca.crt}
       TOKEN_INGESTA:    ${TOKEN_INGESTA:?falta el token de ingesta}
-      INTERVALO_METRICAS: ${INTERVALO_METRICAS:-15s}
+      INTERVALO_METRICAS: ${INTERVALO_METRICAS:-10s}
     volumes:
       - ./agente/collector.yaml:/etc/otelcol/collector.yaml:ro
       - ./agente/ca.crt:/etc/otelcol/ca.crt:ro   # publico: va versionado

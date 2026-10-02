@@ -10,6 +10,10 @@ Este repositorio contiene la **épica 0**: la infraestructura mínima sobre la q
 | **H-002** · Nodo víctima portátil | Aplicación de referencia empaquetada, combinable por perfiles y configurable por entorno | `laboratorio/` |
 | **H-003** · Agente estándar | OpenTelemetry Collector con plantilla única y cola persistente | `laboratorio/agente/` |
 | **H-004** · Punto de entrada | Receptor OTLP propio que aplica el esquema canónico y resuelve activos | `backend/ingesta/` |
+| **H-005** · Almacén de métricas | InfluxDB 3 Core con las tres bases de resolución, alimentado por el punto de entrada | `deploy/compose.yml`, `backend/zenit/admin.py` |
+| **H-006** · Repositorio y endpoint | Interfaz de repositorio que aísla el motor y API con la serie de una métrica | `backend/zenit/repositorio/`, `backend/zenit/api/` |
+| **H-007** · Vista de serie | Gráfica en el navegador con estados de carga, error y sin datos | `frontend/` |
+| **H-008** · Despliegue completo | Todo lo anterior desde los archivos de este repositorio | este README |
 
 ---
 
@@ -21,17 +25,18 @@ Este repositorio contiene la **épica 0**: la infraestructura mínima sobre la q
 
   ┌─────────────────────────────┐          ┌─────────────────────────────────┐
   │  borde · nginx              │          │  zenit-nodo-aws · VPC 10.60/16  │
-  │  TLS en :4317               │◄──OTLP───│                                 │
-  │         │                   │  TLS +   │  agente (OTel Collector)        │
-  │         ▼  red interna      │  token   │     ▲ métricas del host         │
-  │  ingesta · Python           │          │     ▲ trazas de la aplicación   │
-  │  valida token               │          │  pedidos → catalogo → almacen   │
-  │  esquema canónico           │          │  carga ──┘                      │
-  │  resuelve activo            │          └─────────────────────────────────┘
-  │         │                   │          ┌─────────────────────────────────┐
-  │         ▼                   │◄──OTLP───│  DigitalOcean / Azure / on-prem │
-  │  salida JSONL               │          │  (mismo compose, otro .env)     │
-  └─────────────────────────────┘          └─────────────────────────────────┘
+  │  TLS en :4317 y :443        │◄──OTLP───│                                 │
+  │     │ :4317       │ :443    │  TLS +   │  agente (OTel Collector)        │
+  │     ▼             ▼         │  token   │     ▲ métricas del host         │
+  │  ingesta       web · api    │          │     ▲ trazas de la aplicación   │
+  │  valida token     │         │          │  pedidos → catalogo → almacen   │
+  │  esquema canónico │         │          │  carga ──┘                      │
+  │  resuelve activo  │         │          └─────────────────────────────────┘
+  │     │             │         │          ┌─────────────────────────────────┐
+  │     ▼             ▼         │◄──OTLP───│  DigitalOcean / Azure / on-prem │
+  │  influxdb (zenit_raw,       │          │  (mismo compose, otro .env)     │
+  │  zenit_1m, zenit_1h)        │          └─────────────────────────────────┘
+  └─────────────────────────────┘
        deploy/compose.yml                        laboratorio/compose.yml
 ```
 
@@ -48,14 +53,25 @@ Tres principios que explican casi todas las decisiones:
 ```
 .
 ├── backend/
-│   └── ingesta/                 punto de entrada OTLP (H-004)
-│       ├── servidor.py
-│       ├── requirements.txt
-│       └── Dockerfile
-├── deploy/                      la plataforma (H-001)
-│   ├── compose.yml              borde + ingesta
-│   ├── nginx.conf               termina TLS y reenvía por gRPC
-│   ├── catalogo.json            identificador del nodo → activo
+│   ├── ingesta/                 punto de entrada OTLP (H-004)
+│   │   ├── servidor.py          gRPC, token, contadores, catálogo
+│   │   ├── extraccion.py        de OTLP a puntos canónicos
+│   │   ├── destinos.py          escritura por lotes al almacén
+│   │   └── Dockerfile           se construye desde backend/
+│   ├── zenit/                   paquete compartido
+│   │   ├── esquema.py           nombres canónicos
+│   │   ├── protocolo_linea.py   escritura en protocolo de línea
+│   │   ├── influx.py            único cliente HTTP del motor
+│   │   ├── repositorio/         contrato e implementación (H-006)
+│   │   ├── api/main.py          API de consulta (H-006)
+│   │   └── admin.py             crear bases, verificar, huecos (H-005)
+│   ├── pruebas/                 pytest, doble de InfluxDB, nodo simulado
+│   └── Dockerfile.api
+├── frontend/                    vista de serie (H-007), React + uPlot
+├── deploy/                      la plataforma (H-001, H-008)
+│   ├── compose.yml              borde, ingesta, influxdb, api, web
+│   ├── nginx.conf               TLS en 4317 (gRPC) y 443 (interfaz)
+│   ├── catalogo/catalogo.json   identificador del nodo → activo
 │   └── .env.example
 ├── laboratorio/                 el nodo observado (H-002, H-003)
 │   ├── compose.yml              un archivo, cuatro montajes por perfil
@@ -73,6 +89,7 @@ Tres principios que explican casi todas las decisiones:
 │       └── carga/               generador de peticiones
 ├── scripts/
 │   ├── aws/                     aprovisionamiento en EC2
+│   ├── influx/preparar-token.sh token de InfluxDB, una sola vez
 │   ├── tls/emitir.sh            CA propia y certificado del servidor
 │   └── publicar.sh              construye y sube imágenes a GHCR
 ├── tls/ca.crt                   CA pública (la clave privada NO está aquí)
@@ -118,10 +135,47 @@ bash scripts/aws/03-nodo.sh <subred-nodo> <sg-nodo> <sg-plataforma>
 aws ssm start-session --target <id-plataforma>
 sudo su - ubuntu
 git clone https://github.com/Milu385/Zenit.git zenit && cd zenit/deploy
-cp .env.example .env && nano .env              # ORG_GITHUB, TOKEN_INGESTA
-# copiar servidor.crt y servidor.key a deploy/tls/ (no van por git)
+cp .env.example .env && nano .env              # ORG_GITHUB (minúsculas), TOKEN_INGESTA
+bash ../scripts/influx/preparar-token.sh       # token de InfluxDB, una sola vez
+```
+
+El certificado del borde no viaja por git. Se pega desde tu equipo, donde lo
+emitió `emitir.sh`. Si el borde llegó a arrancar sin él, Docker creó dos
+directorios vacíos con esos nombres y los vuelve a crear en cada reinicio: hay
+que detenerlo antes de borrarlos.
+
+```bash
+docker compose stop borde 2>/dev/null; docker compose rm -f borde 2>/dev/null
+sudo rm -rf tls/servidor.crt tls/servidor.key
+mkdir -p tls && sudo chown ubuntu:ubuntu tls
+cat > tls/servidor.crt <<'EOF'
+(contenido de tls/servidor.crt de tu equipo, de BEGIN a END)
+EOF
+cat > tls/servidor.key <<'EOF'
+(contenido de tls/servidor.key de tu equipo)
+EOF
+chmod 600 tls/servidor.key
+ls -l tls/                                     # los dos deben empezar con "-", no con "d"
+
 docker compose --env-file .env up -d --build --wait
 ```
+
+El primer arranque construye tres imágenes (ingesta, API e interfaz) y crea
+las bases `zenit_raw`, `zenit_1m` y `zenit_1h` con su retención. Después,
+desde tu equipo, abre la interfaz para tu IP:
+
+```bash
+bash scripts/aws/abrir-interfaz.sh <sg-plataforma> $(curl -s https://checkip.amazonaws.com) <tu-nombre>
+```
+
+y entra a `https://<ip-elastica>/`. El navegador va a advertir que no conoce
+la CA; se puede importar `tls/ca.crt` como autoridad de confianza o aceptar la
+advertencia.
+
+**Admitir un nodo** son dos pasos: abrir el 4317 a su IP con
+`admitir-nodo.sh` y agregar su `ZENIT_NODO` a `deploy/catalogo/catalogo.json`.
+El punto de entrada relee el catálogo solo, en menos de diez segundos; ya no
+hace falta reiniciarlo.
 
 ### Nodo observado
 
@@ -174,6 +228,8 @@ Los cuatro archivos de `laboratorio/entornos/` son idénticos salvo estas línea
 | `scripts/aws/03-nodo.sh` | Recurrente | Una vez por cada nodo EC2 |
 | `scripts/aws/admitir-nodo.sh` | Recurrente | Cada nodo nuevo de cualquier proveedor |
 | `scripts/aws/userdata-docker.sh` | No se ejecuta a mano | Lo corre EC2 en el primer arranque |
+| `scripts/aws/abrir-interfaz.sh` | Recurrente | Cada IP del equipo que vaya a usar la interfaz |
+| `scripts/influx/preparar-token.sh` | Uso único | Antes del primer arranque de la plataforma |
 | `scripts/tls/emitir.sh` | Ocasional | Solo si cambia la IP elástica |
 | `scripts/publicar.sh <versión>` | Recurrente | Cada versión nueva de la aplicación |
 
@@ -186,6 +242,7 @@ Los cuatro archivos de `laboratorio/entornos/` son idénticos salvo estas línea
 | `tls/ca.key` | Firma certificados en nombre de la CA | Solo en el equipo de quien la creó, con copia de respaldo |
 | `tls/servidor.key` | Clave privada del borde | En `deploy/tls/` de la instancia de la plataforma |
 | `deploy/.env`, `laboratorio/entornos/*.env` | Contienen el token y la clave del almacén | En cada máquina, creados desde su `.example` |
+| `deploy/secretos/influx-admin.json` | Token de administración de InfluxDB | Solo en la instancia de la plataforma |
 
 > **`tls/ca.key` es irreemplazable.** Si se pierde, hay que generar una CA nueva, reemitir el certificado y distribuir el `ca.crt` nuevo a todos los nodos.
 
@@ -194,19 +251,42 @@ Los cuatro archivos de `laboratorio/entornos/` son idénticos salvo estas línea
 ## Verificación rápida
 
 ```bash
-# plataforma: servicios sanos y puertos correctos
-docker compose ps
-ss -tlnp | grep -E '4317|8080'            # 0.0.0.0:4317 y 127.0.0.1:8080
+# plataforma: seis servicios, influxdb-bases terminado con código 0
+docker compose ps -a
+ss -tlnp | grep -E '4317|443|8080|8181|8000'   # solo 0.0.0.0:4317, 0.0.0.0:443 y 127.0.0.1:8080
 
-# desde tu equipo: el TLS valida contra la CA
-openssl s_client -connect <ip-elastica>:4317 -CAfile tls/ca.crt </dev/null 2>&1 | grep Verify
+# desde el NODO OBSERVADO (el grupo de seguridad no admite tu equipo en el 4317)
+openssl s_client -connect <ip-elastica>:4317 -CAfile ~/zenit/laboratorio/agente/ca.crt </dev/null 2>&1 | grep -i verif
 
 # nodo: la cadena de la aplicación responde
 curl -X POST http://localhost:8000/pedidos
 
-# plataforma: señales recibidas, emitidas, huérfanas y rechazadas
-curl -s localhost:8080/metricas
+# plataforma: contadores por punto de datos
+curl -s localhost:8080/metricas | python3 -m json.tool
+#   senales.metricas: recibidas = emitidas + sin_valor + errores + rechazadas_por_almacen + en_cola
+#   en reposo, en_cola es 0; huerfanas cuenta los puntos de nodos fuera del catálogo
+
+# plataforma: esquema del almacén (H-005)
+docker compose exec api python -m zenit.admin verificar
+
+# plataforma: saltos de más de 20 s en los últimos 30 minutos (H-003, corte de 5 minutos)
+docker compose exec api python -m zenit.admin huecos activo-aws-nodo-01 --minutos 30
+
+# desde fuera: el almacén, la API y el administrador NO responden
+nc -zv -w 3 <ip-elastica> 8181; nc -zv -w 3 <ip-elastica> 8000; nc -zv -w 3 <ip-elastica> 8080
 ```
+
+**Prueba de corte (H-003).** Con el nodo emitiendo: `docker compose stop borde`,
+esperar cinco minutos, `docker compose start borde`, esperar un minuto y correr
+`huecos`. La cola persistente del agente debe haber entregado todo: cero
+huecos de más de 20 s. Si `docker compose stop borde` tarda, es la ingesta
+vaciando su cola; está bien.
+
+**Prueba de cierre de la épica (H-007).** Con la interfaz abierta en
+`system_cpu_utilization`, levantar en el nodo `--profile carga` (o
+`stress-ng --cpu 2 --timeout 120`) y medir cuánto tarda en verse el escalón.
+RNF-REN-01 pide 30 segundos en el percentil 95: el agente agrupa hasta 5 s,
+la ingesta 1 s y la vista refresca cada 10 s.
 
 ---
 
@@ -218,5 +298,70 @@ curl -s localhost:8080/metricas
 | H-002 | ☑ Cadena `pedidos → catalogo → almacen` · ☑ desechable en local y en EC2 · ☐ portable entre dos entornos |
 | H-003 | ☐ Agente emite · ☐ la cola persistente no pierde puntos durante un corte |
 | H-004 | ☐ Recibe OTLP · ☐ conteo de entrada = conteo de salida · ☐ huérfanas marcadas, no descartadas |
+| H-005 | ☐ Tres bases creadas · ☐ métricas consultables · ☐ `zenit.admin verificar` sin fallas · ☐ sobrevive a reinicio |
+| H-006 | ☐ Endpoint en `/api/docs` · ☐ revisión: ningún SQL fuera de `repositorio/influx.py` y `admin.py` |
+| H-007 | ☐ Gráfica con rango configurable · ☐ escalón de carga visible en 30 s · ☐ estados de carga, error y sin datos |
+| H-008 | ☐ Despliegue desde instancia limpia por alguien que no lo construyó, solo con este README |
 
 La épica se cierra con el ensayo completo: destruir el nodo, recrearlo desde este repositorio y ver llegar a la plataforma dos valores distintos de `cloud_provider` desde dos redes que no se conocen.
+
+---
+
+## Problemas conocidos
+
+**Memoria.** Una `t3.small` tiene 2 GB y la AMI de Ubuntu no trae swap. InfluxDB
+reserva por defecto una parte de la memoria para consultas y caché, y el primer
+`--build` compila tres imágenes en la misma máquina. Si el build o un
+contenedor muere sin mensaje (`docker compose ps` muestra `Exited (137)`), es
+el OOM. Un swap de 2 GB lo evita:
+
+```bash
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+**Token de InfluxDB perdido.** InfluxDB registra el token del archivo
+`deploy/secretos/influx-admin.json` la primera vez que arranca con el volumen
+vacío, y después lo ignora. Si se pierde `deploy/.env` y se genera un token
+nuevo, `influxdb-bases` falla con 401. Hay dos salidas: recuperar el `.env`
+anterior (por eso conviene respaldarlo) o, si los datos no importan, borrar el
+volumen con `docker compose down -v` y volver a arrancar.
+
+**Ventana de pérdida.** Un punto que la ingesta ya aceptó vive en memoria
+hasta que se escribe, normalmente menos de un segundo. Si el proceso muere de
+golpe en ese lapso, ese punto se pierde: el agente ya lo dio por entregado. Un
+`docker compose stop` o un reinicio ordenado vacían la cola antes de salir.
+
+---
+
+## Desarrollo local y pruebas
+
+Las pruebas del backend no necesitan AWS ni Docker. Usan el cliente OTLP real
+contra el punto de entrada real, y un doble de InfluxDB que analiza el
+protocolo de línea con las mismas reglas que el motor y ejecuta el SQL con
+DataFusion, que es el motor de consulta de InfluxDB 3.
+
+```bash
+cd backend
+pip install -r requirements-pruebas.txt
+python -m pytest pruebas/
+```
+
+Para ver la interfaz con datos sin desplegar nada:
+
+```bash
+cd backend
+python pruebas/falso_influx.py 18181 &
+INFLUX_URL=http://127.0.0.1:18181 INFLUX_TOKEN=apiv3_prueba python -m zenit.admin crear-bases
+(cd ingesta && INFLUX_URL=http://127.0.0.1:18181 INFLUX_TOKEN=apiv3_prueba PUERTO_OTLP=14317 PUERTO_ADMIN=18080 \
+   RUTA_CATALOGO=../../deploy/catalogo/catalogo.json RUTA_SALIDA=/tmp/zenit PYTHONPATH=.. python servidor.py &)
+INFLUX_URL=http://127.0.0.1:18181 INFLUX_TOKEN=apiv3_prueba RUTA_CATALOGO=../deploy/catalogo/catalogo.json \
+   python -m uvicorn zenit.api.main:app --port 8000 &
+python pruebas/nodo_simulado.py --destino 127.0.0.1:14317 --relleno-min 20 --cada 2 --escalon-tras 60 &
+cd ../frontend && npm install && npm run dev       # http://localhost:5173
+```
+
+El doble no verifica retención, persistencia ni rendimiento: eso se verifica
+contra el motor real en la plataforma, con los comandos de la sección de
+verificación.
