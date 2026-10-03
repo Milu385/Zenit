@@ -1,0 +1,7 @@
+# Para correr backend/pruebas en el equipo de desarrollo.
+-r ingesta/requirements.txt
+-r requirements-api.txt
+pytest
+datafusion==54.0.0
+pyarrow
+httpx2

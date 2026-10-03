@@ -2,8 +2,6 @@
 # [PC local]  --  scripts/aws/01-redes.sh
 set -euo pipefail
 
-MI_IP="$(curl -s https://checkip.amazonaws.com)/32"
-
 # ---------------------------------------------------------------- PLATAFORMA
 # Vive en la VPC por defecto. Es el unico recurso con entrada desde internet.
 VPC_PLAT=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true \
@@ -13,9 +11,10 @@ SG_PLAT=$(aws ec2 create-security-group \
   --group-name zenit-plataforma --description "Zenit: plataforma" \
   --vpc-id "$VPC_PLAT" --query GroupId --output text)
 
-# Administracion (salud, metricas): solo tu equipo
-aws ec2 authorize-security-group-ingress --group-id "$SG_PLAT" \
-  --ip-permissions "IpProtocol=tcp,FromPort=8080,ToPort=8080,IpRanges=[{CidrIp=$MI_IP,Description=equipo}]"
+# Sin reglas de entrada al crearlo. Se abren despues, una IP a la vez:
+#   4317 para cada nodo   -> admitir-nodo.sh
+#   443  para cada persona -> abrir-interfaz.sh
+# El administrador de la ingesta (8080) esta atado a 127.0.0.1 y no se abre.
 
 # ---------------------------------------------------- RED DEL NODO OBSERVADO
 # VPC propia. 10.60.0.0/16 no solapa con la 172.31.0.0/16 por defecto,
