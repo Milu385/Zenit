@@ -2,7 +2,7 @@
 
 **Plataforma de observabilidad neutral respecto al proveedor.** Un mismo nodo observado corre idéntico en AWS, DigitalOcean, Azure o un servidor on-premise, y su telemetría llega por OpenTelemetry a un único punto de entrada que la normaliza y la asocia a un activo.
 
-Este repositorio contiene la **épica 0**: la infraestructura mínima sobre la que se construye el resto del producto.
+Este repositorio contiene la **épica 0**, la infraestructura mínima sobre la que se construye el resto del producto, y la **épica 2**, el laboratorio de fallos que produce los datos y la verdad de referencia para evaluar la detección (sección [Laboratorio de fallos](#laboratorio-de-fallos-épica-2)).
 
 | Historia | Qué entrega | Dónde vive |
 |---|---|---|
@@ -64,19 +64,22 @@ Tres principios que explican casi todas las decisiones:
 │   │   ├── influx.py            único cliente HTTP del motor
 │   │   ├── repositorio/         contrato e implementación (H-006)
 │   │   ├── api/main.py          API de consulta (H-006)
-│   │   └── admin.py             crear bases, verificar, huecos (H-005)
+│   │   ├── verdad.py            cargador de la verdad de referencia (H-024)
+│   │   └── admin.py             crear bases, verificar, huecos, cargar-verdad, exportar
 │   ├── pruebas/                 pytest, doble de InfluxDB, nodo simulado
 │   └── Dockerfile.api
 ├── frontend/                    vista de serie (H-007), React + uPlot
 ├── deploy/                      la plataforma (H-001, H-008)
-│   ├── compose.yml              borde, ingesta, influxdb, api, web
+│   ├── compose.yml              borde, ingesta, influxdb, api, web, postgres, cargador
+│   ├── postgres/01-esquema.sql  tablas del contrato de la API (inyecciones, anomalías...)
 │   ├── nginx.conf               TLS en 4317 (gRPC) y 443 (interfaz)
 │   ├── catalogo/catalogo.json   identificador del nodo → activo
 │   └── .env.example
 ├── laboratorio/                 el nodo observado (H-002, H-003)
 │   ├── compose.yml              un archivo, cuatro montajes por perfil
+│   ├── perfiles/                perfiles de carga versionados (H-023)
 │   ├── agente/
-│   │   ├── collector.yaml       plantilla única del Collector
+│   │   ├── collector.yaml       plantilla única del Collector (métricas, trazas, verdad)
 │   │   └── ca.crt               CA pública de la plataforma
 │   ├── entornos/
 │   │   ├── aws.env.example
@@ -86,9 +89,12 @@ Tres principios que explican casi todas las decisiones:
 │   └── servicios/
 │       ├── pedidos/             FastAPI · llama a catalogo
 │       ├── catalogo/            FastAPI · lee y escribe en el almacén
-│       └── carga/               generador de peticiones
+│       ├── carga/               generador de peticiones con perfil diurno (H-023)
+│       └── inyector/            fallos, verdad de referencia y campaña (H-024 a H-030)
 ├── scripts/
 │   ├── aws/                     aprovisionamiento en EC2
+│   ├── do/                      aprovisionamiento en DigitalOcean (épica 2)
+│   ├── exportar.sh              datos del laboratorio para trabajar sin la plataforma
 │   ├── influx/preparar-token.sh token de InfluxDB, una sola vez
 │   ├── tls/emitir.sh            CA propia y certificado del servidor
 │   └── publicar.sh              construye y sube imágenes a GHCR
@@ -253,14 +259,200 @@ En otro proveedor, el mismo comando con su archivo: `--env-file entornos/digital
 
 ---
 
+## Laboratorio de fallos (épica 2)
+
+La plataforma corre en un droplet de DigitalOcean siempre encendido. Los nodos
+observados son dos: uno on-premise en el Proxmox y uno de nube en otro droplet.
+Cada nodo corre su aplicación, su generador de carga, su agente y un inyector
+que provoca fallos de forma programada. La planeación completa está en
+`plan-epica-2.md` del proyecto.
+
+```
+  nodo (Proxmox o DigitalOcean)                          plataforma (DigitalOcean)
+  inyector ──escribe antes de inyectar──▶ verdad.jsonl
+                                            │ filelog
+  pedidos, catalogo, carga ──trazas──▶ agente ──OTLP+TLS──▶ borde ▶ ingesta ▶ influxdb
+  /proc, /sys del anfitrión ──métricas──▶   │                           └▶ registros ▶ cargador ▶ postgres
+```
+
+El inyector no tiene red (`network_mode: none`): no conoce la plataforma ni
+tiene credenciales suyas. La verdad de referencia sale del nodo por el agente,
+como registro OTLP, igual que las métricas (RF-LAB-04).
+
+### Plataforma en DigitalOcean
+
+Requisitos en tu equipo, además de los de arriba: `doctl` autenticado
+(`doctl auth init`) y una llave SSH registrada en DigitalOcean
+(`doctl compute ssh-key list`).
+
+```bash
+bash scripts/do/01-plataforma.sh <llave-ssh>          # droplet + IP reservada + cortafuegos (solo 22 desde tu IP)
+bash scripts/tls/emitir.sh <ip-reservada>             # certificado nuevo con la CA vigente (exige tls/ca.key)
+bash scripts/do/abrir-equipo.sh $(curl -s https://checkip.amazonaws.com) juanjo
+ssh root@<ip-reservada>
+```
+
+En el droplet, cuando exista `/var/lib/zenit-listo`:
+
+```bash
+git clone https://github.com/Milu385/Zenit.git zenit && cd zenit/deploy
+cp .env.example .env && nano .env      # ORG_GITHUB, TOKEN_INGESTA, PG_CLAVE (openssl rand -hex 24)
+bash ../scripts/influx/preparar-token.sh
+mkdir -p tls                            # y pega servidor.crt y servidor.key como en la sección Plataforma
+docker compose --env-file .env up -d --build --wait
+docker compose ps -a                    # ocho contenedores: siete arriba e influxdb-bases terminado con código 0
+```
+
+El cortafuegos de DigitalOcean está fuera del droplet, así que Docker no lo
+puede saltar (con `ufw` dentro del droplet, los puertos publicados por Docker
+sí lo saltarían).
+
+### Nodo de nube en DigitalOcean
+
+```bash
+bash scripts/do/02-nodo.sh <llave-ssh> zenit-nodo-do    # crea el droplet y lo admite en el 4317
+ssh root@<ip-del-nodo>
+git clone https://github.com/Milu385/Zenit.git zenit && cd zenit/laboratorio
+cp entornos/digitalocean.env.example entornos/digitalocean.env && nano entornos/digitalocean.env
+#   DESTINO_OTLP=<ip-reservada>:4317, TOKEN_INGESTA, ORG_GITHUB, ALMACEN_CLAVE
+docker compose --env-file entornos/digitalocean.env \
+  --profile completo --profile carga --profile observado --profile laboratorio up -d --build --wait
+```
+
+Y en la plataforma, agrega `"zenit-nodo-do": "activo-do-nodo-01"` a
+`deploy/catalogo/catalogo.json`. La ingesta lo relee sola.
+
+### Nodo on-premise en el Proxmox
+
+Una máquina virtual con Ubuntu Server 24.04, 2 vCPU, 4 GB de RAM y 30 GB de disco.
+En la máquina virtual:
+
+```bash
+sudo apt-get install -y git
+git clone https://github.com/Milu385/Zenit.git zenit && cd zenit
+sudo bash scripts/do/userdata-docker.sh              # Docker, swap, reloj y rotación de registros, igual que en los droplets
+sudo usermod -aG docker "$USER" && newgrp docker
+curl -s https://checkip.amazonaws.com                # IP con la que sale a internet
+```
+
+Desde tu equipo, `bash scripts/do/admitir-nodo.sh <esa-ip> zenit-nodo-onprem`.
+De vuelta en la máquina virtual:
+
+```bash
+cd ~/zenit/laboratorio
+cp entornos/onprem.env.example entornos/onprem.env && nano entornos/onprem.env
+#   DESTINO_OTLP=<ip-reservada>:4317, TOKEN_INGESTA, ORG_GITHUB, ALMACEN_CLAVE
+docker compose -f compose.yml -f compose.onprem.yml --env-file entornos/onprem.env \
+  --profile completo --profile carga --profile observado --profile laboratorio up -d --build --wait
+```
+
+Y en el catálogo, `"zenit-nodo-onprem": "activo-onprem-nodo-01"`. Si la red del
+Proxmox sale con IP dinámica, cada cambio corta el nodo hasta admitir la IP
+nueva y retirar la vieja con `scripts/do/retirar.sh 4317 <ip-vieja>`.
+
+### Manejar la campaña
+
+La campaña arranca sola con el perfil `laboratorio`. La primera vez espera
+`CALENTAMIENTO_H` horas (12 por defecto) sin inyectar, para que haya
+comportamiento normal de referencia. Después inyecta cada 60 a 150 minutos,
+con al menos 45 minutos de normalidad entre una inyección y la siguiente.
+
+```bash
+docker compose --env-file entornos/<entorno>.env logs -f inyector                 # qué hace y qué viene
+docker compose --env-file entornos/<entorno>.env exec inyector python -m inyector plan --n 10
+docker compose --env-file entornos/<entorno>.env exec inyector python -m inyector abiertas
+docker compose --env-file entornos/<entorno>.env stop inyector                    # pausa: cierra la inyección en curso como fallida y restaura el nodo
+```
+
+Las primeras inyecciones de cada tipo conviene hacerlas a mano, mirando la
+gráfica. Con la campaña detenida:
+
+```bash
+docker compose --env-file entornos/<entorno>.env run --rm inyector python -m inyector manual cpu --carga 70 --duracion 300
+#   memoria --objetivo 0.75 · disco --modo gradual --objetivo 0.8 --duracion 600 · caida --servicio catalogo --duracion 180
+```
+
+Topes de seguridad: CPU 90 %, memoria ocupada 85 % del total, disco 85 % del
+sistema de archivos. Si el nodo ya está por encima, la inyección queda
+`fallida` con el motivo y no se ejecuta.
+
+### La verdad de referencia en la plataforma
+
+```bash
+cd ~/zenit/deploy
+docker compose logs cargador --tail 5        # inyecciones=N cambiadas=M descartadas=0, una línea por minuto
+docker compose exec postgres psql -U zenit -c \
+  "SELECT nodo, tipo, estado, inicio, fin - inicio AS duracion FROM inyecciones ORDER BY inicio DESC LIMIT 10"
+```
+
+Solo cuentan las inyecciones `completada`. Una `fallida` lleva su motivo en
+`parametros->>'motivo'`. Toda inyección cerrada dice además qué pasó con el
+efecto en `parametros->'cierre'`: `efecto` es `ninguno` (no se llegó a
+provocar), `parcial` (se cortó) o `completo`, con `efecto_inicio` y
+`efecto_fin`. Si el nodo se apagó a mitad, el cierre lleva `fin_estimado`.
+
+**Si una inyección no aparece o se queda `en_curso`.** La línea viaja por un
+exportador que reintenta sin límite, pero si algo la perdió en el camino, el
+archivo del nodo sigue teniendo todo. En el nodo:
+
+```bash
+docker compose --env-file entornos/<entorno>.env cp inyector:/var/lib/zenit-lab/verdad.jsonl ./verdad-<nodo>.jsonl
+```
+
+Cópialo a la plataforma (`scp`) y cárgalo; el upsert no duplica nada:
+
+```bash
+cd ~/zenit/deploy
+docker compose run --rm -v "$PWD/../verdad-<nodo>.jsonl:/tmp/verdad.jsonl:ro" cargador \
+  python -m zenit.admin cargar-verdad --crudo /tmp/verdad.jsonl --activo <activo-del-nodo>
+```
+
+### Exportar datos para la evaluación
+
+```bash
+bash ~/zenit/scripts/exportar.sh 2026-10-06T00:00Z 2026-10-07T00:00Z
+bash ~/zenit/scripts/exportar.sh ayer
+```
+
+Deja en `~/zenit/exportaciones/` un `.tar.gz` con un Parquet por métrica (UTC,
+etiquetas, dimensiones y `value`), `inyecciones.csv`, `huecos.csv` y
+`manifiesto.json`. Para una exportación diaria automática, en la plataforma:
+
+```bash
+mkdir -p /root/zenit/exportaciones
+( crontab -l 2>/dev/null; echo '20 0 * * * bash /root/zenit/scripts/exportar.sh ayer >> /root/zenit/exportaciones/cron.log 2>&1' ) | crontab -
+```
+
+Y desde tu equipo: `scp root@<ip-reservada>:zenit/exportaciones/*.tar.gz .`
+
+El nivel crudo de InfluxDB guarda 30 días (`RETENCION_RAW`), lo que dura la
+campaña, así que una exportación que falle un día se puede repetir después.
+
+### Qué métrica mueve cada fallo
+
+| Fallo | Métrica principal | Apoyo |
+|---|---|---|
+| CPU | `system_cpu_utilization`, `state=user` | `system_cpu_load_average_1m` |
+| Memoria | `system_memory_utilization`, `state=used` | `system_paging_*` |
+| Disco gradual o abrupto | `system_filesystem_usage`, `state=used` | `system_disk_io` |
+| Caída de servicio | `traces_span_metrics_calls` del servicio (acumulada: la tasa es la diferencia) | `system_network_io` |
+
+`traces_span_metrics_*` sale del conector `spanmetrics` del agente, a partir de
+las trazas de `pedidos` y `catalogo`. Se reinicia cuando el agente se reinicia.
+Las trazas en sí no se envían a la plataforma: solo alimentan esas métricas,
+hasta que H-017 les dé un almacén.
+
+---
+
 ## Perfiles del nodo
 
 | Comando | Qué levanta |
 |---|---|
 | `up -d` | `almacen` + `pedidos` |
 | `--profile completo` | + `catalogo` (la llamada entre servicios) |
-| `--profile carga` | + `carga` (tráfico sostenido) |
-| `--profile observado` | + `agente` (emite telemetría) |
+| `--profile carga` | + `carga` (tráfico con el perfil de `CARGA_PERFIL`) |
+| `--profile observado` | + `agente` (emite telemetría y la verdad de referencia) |
+| `--profile laboratorio` | + `inyector` (campaña de fallos desatendida) |
 
 Levantar con y sin `observado` permite medir cuánto consume el propio instrumental.
 
@@ -294,6 +486,13 @@ Los cuatro archivos de `laboratorio/entornos/` son idénticos salvo estas línea
 | `scripts/influx/preparar-token.sh` | Uso único | Antes del primer arranque de la plataforma |
 | `scripts/tls/emitir.sh` | Ocasional | Solo si cambia la IP elástica. Exige `tls/ca.key`; `NUEVA_CA=1` crea una CA nueva a propósito |
 | `scripts/publicar.sh <versión>` | Recurrente | Cada versión nueva de la aplicación |
+| `scripts/do/01-plataforma.sh` | Uso único | Crea el droplet de la plataforma, su IP reservada y su cortafuegos |
+| `scripts/do/02-nodo.sh` | Recurrente | Un droplet por cada nodo observado en DigitalOcean |
+| `scripts/do/admitir-nodo.sh` | Recurrente | Abre el 4317 a un nodo de cualquier proveedor, el Proxmox incluido |
+| `scripts/do/abrir-equipo.sh` | Recurrente | Abre el 443 y el 22 a la IP de un integrante |
+| `scripts/do/retirar.sh` | Ocasional | Quita una IP de un puerto (un nodo que cambió de IP) |
+| `scripts/do/userdata-docker.sh` | No se ejecuta a mano | Lo corre el droplet al nacer; sirve también para la VM del Proxmox |
+| `scripts/exportar.sh` | Diario | En la plataforma: datos del laboratorio para la evaluación |
 
 ---
 
@@ -375,7 +574,7 @@ Verificado en AWS el 3 de octubre de 2026. La evidencia, paso por paso, está en
 | H-003 | ☑ Agente emite a 10 s · ☑ un corte de 5 minutos no deja huecos |
 | H-004 | ☑ Recibe OTLP · ☑ conteo de entrada = conteo de salida · ☑ huérfanas marcadas y guardadas como `sin_resolver` |
 | H-005 | ☑ Tres bases creadas · ☑ métricas consultables · ☑ `zenit.admin verificar` sin fallas · ☑ sobrevive a reinicio · ☑ esquema en [`docs/esquema-medicion.md`](docs/esquema-medicion.md) |
-| H-006 | ☑ Endpoint en `/api/docs` · ☐ revisión cruzada: ningún SQL fuera de `repositorio/influx.py` y `admin.py` |
+| H-006 | ☑ Endpoint en `/api/docs` · ☐ revisión cruzada: ninguna consulta al motor fuera de `repositorio/influx.py` y `admin.py` (`grep -rn "\.consultar(" backend --include='*.py' --exclude-dir=.venv \| grep -v pruebas`) |
 | H-007 | ☑ Gráfica con rango configurable · ☑ escalón de carga visible en 19 s (límite 30 s) · ☑ estados de carga, error y sin datos |
 | H-008 | ☑ Compose versionado · ☑ plantillas sin valores, historial sin secretos · ☑ aprovisionamiento documentado · ☐ despliegue desde instancia limpia por alguien que no lo construyó, solo con este README |
 
@@ -449,6 +648,27 @@ golpe en ese lapso, ese punto se pierde: el agente ya lo dio por entregado. Un
 
 ---
 
+## Uso de inteligencia artificial
+
+Parte del código, las pruebas y la documentación de este repositorio se
+escribió con asistencia de Claude (Anthropic), un modelo de lenguaje, usado
+como par de programación. Lo declaramos así:
+
+- **Quién decide.** El alcance, la arquitectura y las decisiones técnicas son
+  del equipo. La herramienta propone; lo que entra al repositorio lo revisó,
+  lo probó y lo aprobó un integrante.
+- **Quién responde.** Cada integrante puede explicar y sustentar el código de
+  su frente sin la herramienta al lado.
+- **Cómo se verifica.** Nada se da por bueno porque la herramienta lo diga: las
+  pruebas automáticas, las verificaciones en la plataforma real y la revisión
+  cruzada de la definición de terminado aplican igual.
+- **Qué no sale.** No se comparten con la herramienta secretos, llaves ni
+  datos personales.
+- **Dónde consta.** Los commits hechos con asistencia lo dicen en su mensaje
+  con la línea `Uso de IA: ...`.
+
+---
+
 ## Desarrollo local y pruebas
 
 Las pruebas del backend no necesitan AWS ni Docker. Usan el cliente OTLP real
@@ -460,6 +680,18 @@ DataFusion, que es el motor de consulta de InfluxDB 3.
 cd backend
 pip install -r requirements-pruebas.txt
 python -m pytest pruebas/
+```
+
+Las pruebas del cargador contra PostgreSQL se saltan salvo que haya una base
+de pruebas vacía, que borran y recrean:
+`ZENIT_PG_PRUEBAS=postgresql://usuario@127.0.0.1:5432/zenit_pruebas python -m pytest pruebas/`.
+
+Las del laboratorio corren aparte, porque el laboratorio no importa nada del
+backend:
+
+```bash
+cd laboratorio/servicios/inyector && python -m pytest pruebas/   # usa stress-ng si está instalado
+cd laboratorio/servicios/carga && python -m pytest pruebas/
 ```
 
 Para ver la interfaz con datos sin desplegar nada:
