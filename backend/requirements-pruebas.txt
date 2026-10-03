@@ -4,3 +4,4 @@
 pytest
 datafusion==54.0.0
 pyarrow
+httpx2
