@@ -1,9 +1,11 @@
 name: zenit-plataforma
 
-# Epica 0 completa: borde, punto de entrada, almacen de series, API e interfaz.
+# Epica 0 completa (borde, punto de entrada, almacen de series, API e interfaz)
+# y, desde la epica 2, PostgreSQL con el cargador de la verdad de referencia.
 #
 #   internet ──4317 (OTLP, TLS)──▶ borde ──▶ ingesta ──▶ influxdb
-#   equipo   ──443 (HTTPS)──────▶ borde ──▶ api ──────▶ influxdb
+#                                              └─▶ registros ──▶ cargador ──▶ postgres
+#   equipo   ──443 (HTTPS)──────▶ borde ──▶ api ──────▶ influxdb, postgres
 #                                       └─▶ web
 #
 # Solo el borde publica puertos. El grupo de seguridad limita el 4317 a las IP
@@ -13,6 +15,9 @@ x-influx: &influx
   INFLUX_URL: http://influxdb:8181
   INFLUX_TOKEN: ${INFLUX_TOKEN:?falta INFLUX_TOKEN; corre scripts/influx/preparar-token.sh}
   INFLUX_BD: zenit_raw
+
+x-pg: &pg
+  PG_URL: postgresql://zenit:${PG_CLAVE:?falta PG_CLAVE; openssl rand -hex 24}@postgres:5432/zenit
 
 services:
 
@@ -48,7 +53,7 @@ services:
   # Una sola vez por arranque: crea las tres bases con su retencion. Es
   # idempotente, asi que repetirlo no hace dano.
   influxdb-bases:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.2.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.3.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
@@ -56,7 +61,7 @@ services:
     restart: "no"
     environment:
       <<: *influx
-      RETENCION_RAW: ${RETENCION_RAW:-7d}
+      RETENCION_RAW: ${RETENCION_RAW:-30d}
       RETENCION_1M: ${RETENCION_1M:-30d}
       RETENCION_1H: ${RETENCION_1H:-180d}
     depends_on:
@@ -64,7 +69,7 @@ services:
         condition: service_healthy
 
   ingesta:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-ingesta:${VERSION_INGESTA:-0.2.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-ingesta:${VERSION_INGESTA:-0.3.0}
     build:
       context: ../backend              # incluye el paquete compartido zenit/
       dockerfile: ingesta/Dockerfile
@@ -102,13 +107,13 @@ services:
       start_period: 15s
 
   api:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.2.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.3.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
     restart: unless-stopped
     environment:
-      <<: *influx
+      <<: [*influx, *pg]
       RUTA_CATALOGO: /etc/zenit/catalogo/catalogo.json
     volumes:
       - ./catalogo:/etc/zenit/catalogo:ro
@@ -116,6 +121,8 @@ services:
     depends_on:
       influxdb-bases:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/salud')"]
@@ -123,6 +130,45 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+
+  # Tablas compartidas: inyecciones, anomalias, diagnosticos y usuarios
+  # (contrato de la API, seccion 4). Las crea deploy/postgres/01-esquema.sql
+  # la primera vez que arranca con el volumen vacio.
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      POSTGRES_USER: zenit
+      POSTGRES_PASSWORD: ${PG_CLAVE:?falta PG_CLAVE; openssl rand -hex 24}
+      POSTGRES_DB: zenit
+    volumes:
+      - pg_datos:/var/lib/postgresql/data
+      - ./postgres:/docker-entrypoint-initdb.d:ro
+    # 5432 NO se publica: solo la alcanzan la API y el cargador
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zenit -d zenit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Verdad de referencia del laboratorio: lee los registros que la ingesta
+  # guardo y los deja en la tabla inyecciones, una vez por minuto (H-024).
+  cargador:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.3.0}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "zenit.admin", "cargar-verdad", "--cada", "60"]
+    restart: unless-stopped
+    environment:
+      <<: *pg
+      RUTA_SALIDA: /datos/salida
+    volumes:
+      - ingesta_datos:/datos:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   web:
     image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-web:${VERSION_WEB:-0.2.0}
@@ -179,3 +225,4 @@ services:
 volumes:
   influx_datos:                        # series temporales, sobrevive al reinicio
   ingesta_datos:                       # trazas y registros en archivo
+  pg_datos:                            # inyecciones, anomalias, diagnosticos, usuarios

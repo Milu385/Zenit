@@ -21,10 +21,10 @@ def test_crear_bases_es_idempotente(capsys):
     try:
         assert admin.crear_bases(cliente) == 0
         assert {b: almacen.bases[b]["retencion"] for b in almacen.bases} == {
-            "zenit_raw": "7d", "zenit_1m": "30d", "zenit_1h": "180d"}
+            "zenit_raw": "30d", "zenit_1m": "30d", "zenit_1h": "180d"}
         almacen.bases["zenit_raw"]["retencion"] = "1d"
         assert admin.crear_bases(cliente) == 0      # segunda vez: no falla, corrige
-        assert almacen.bases["zenit_raw"]["retencion"] == "7d"
+        assert almacen.bases["zenit_raw"]["retencion"] == "30d"
         assert "existia" in capsys.readouterr().out
     finally:
         srv.shutdown()

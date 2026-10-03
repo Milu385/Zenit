@@ -240,7 +240,11 @@ class PuntoDeEntrada:
         return True
 
     # ---- trazas y registros: a archivo hasta la epica 1
-    def exportar_archivo(self, senal: str, bloques, extraer) -> None:
+    def exportar_archivo(self, senal: str, bloques, extraer) -> bool:
+        """False si no se pudo escribir: quien llama responde UNAVAILABLE y el
+        agente reintenta desde su cola persistente. Responder OK sin haber
+        guardado perderia la linea en silencio (la verdad de referencia del
+        laboratorio viaja por aqui)."""
         registros, huerfanos = [], 0
         for bloque in bloques:
             ident = self.identidad(bloque.resource)
@@ -248,7 +252,7 @@ class PuntoDeEntrada:
                 registros.append({**ident.etiquetas, **item})
                 huerfanos += ident.huerfana
         if not registros:
-            return
+            return True
         self.contadores.sumar(senal, "recibidas", len(registros))
         self.contadores.sumar(senal, "huerfanas", huerfanos)
         try:
@@ -256,6 +260,8 @@ class PuntoDeEntrada:
         except OSError:
             log.exception("no se pudo escribir %s", senal)
             self.contadores.sumar(senal, "errores", len(registros))
+            return False
+        return True
 
     def estado(self) -> dict:
         d = self.destino_metricas
@@ -319,7 +325,8 @@ class Trazas(trace_service_pb2_grpc.TraceServiceServicer):
                            "nombre": span.name,
                            "inicio_ns": span.start_time_unix_nano,
                            "fin_ns": span.end_time_unix_nano}
-        self.nucleo.exportar_archivo("trazas", request.resource_spans, extraer)
+        if not self.nucleo.exportar_archivo("trazas", request.resource_spans, extraer):
+            context.abort(grpc.StatusCode.UNAVAILABLE, "no se pudo guardar, reintentar")
         return trace_service_pb2.ExportTraceServiceResponse()
 
 
@@ -334,7 +341,8 @@ class Registros(logs_service_pb2_grpc.LogsServiceServicer):
                     yield {"severidad": reg.severity_text,
                            "cuerpo": valor_de(reg.body),
                            "momento_ns": reg.time_unix_nano or reg.observed_time_unix_nano}
-        self.nucleo.exportar_archivo("registros", request.resource_logs, extraer)
+        if not self.nucleo.exportar_archivo("registros", request.resource_logs, extraer):
+            context.abort(grpc.StatusCode.UNAVAILABLE, "no se pudo guardar, reintentar")
         return logs_service_pb2.ExportLogsServiceResponse()
 
 
