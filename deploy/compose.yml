@@ -35,6 +35,8 @@ services:
         source: ./secretos/influx-admin.json
         target: /run/zenit/influx-admin.json
         read_only: true
+        bind:
+          create_host_path: false
     # 8181 NO se publica: solo lo alcanzan la ingesta y la API
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8181 && printf 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q ' 200'"]
@@ -142,21 +144,29 @@ services:
         condition: service_healthy
       web:
         condition: service_healthy
-    # Sintaxis larga: si falta un archivo, el arranque falla con un mensaje
-    # claro en vez de crear un directorio vacio en su lugar.
+    # create_host_path: false hace que un archivo faltante detenga el arranque
+    # con un error que dice cual es. Sin eso, Compose crea un directorio vacio
+    # con ese nombre (tambien con la sintaxis larga) y nginx entra en ciclo de
+    # reinicio.
     volumes:
       - type: bind
         source: ./nginx.conf
         target: /etc/nginx/nginx.conf
         read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: ./tls/servidor.crt
         target: /etc/nginx/tls/servidor.crt
         read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: ./tls/servidor.key
         target: /etc/nginx/tls/servidor.key
         read_only: true
+        bind:
+          create_host_path: false
     ports:
       - "0.0.0.0:4317:4317"           # OTLP de los nodos
       - "0.0.0.0:443:443"             # interfaz y API, solo IP del equipo

@@ -8,13 +8,19 @@ AMI=$(aws ssm get-parameters \
   --names /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id \
   --query 'Parameters[0].Value' --output text)
 
+# El disco raiz se amplia por el nombre de dispositivo que declara la AMI
+# (en Ubuntu es /dev/sda1). Con otro nombre, EC2 agrega un volumen aparte que
+# nadie monta y la raiz se queda en 8 GB.
+RAIZ=$(aws ec2 describe-images --image-ids "$AMI" \
+  --query 'Images[0].RootDeviceName' --output text)
+
 ID=$(aws ec2 run-instances \
   --image-id "$AMI" \
   --instance-type t3.small \
   --security-group-ids "$SG_PLAT" \
   --iam-instance-profile "Name=$ROL_INSTANCIA" \
   --metadata-options "HttpTokens=required,HttpEndpoint=enabled" \
-  --block-device-mappings '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":30,"VolumeType":"gp3","DeleteOnTermination":true}}]' \
+  --block-device-mappings '[{"DeviceName":"'"$RAIZ"'","Ebs":{"VolumeSize":30,"VolumeType":"gp3","DeleteOnTermination":true}}]' \
   --user-data file://scripts/aws/userdata-docker.sh \
   --tag-specifications 'ResourceType=instance,Tags=[
       {Key=Name,Value=zenit-plataforma},
