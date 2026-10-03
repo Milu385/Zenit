@@ -5,7 +5,7 @@ VERSION="${1:?uso: publicar.sh <version>   p.ej. 0.1.0}"
 
 echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$ORG" --password-stdin
 
-for s in pedidos catalogo carga; do
+for s in pedidos catalogo carga inyector; do
   docker build --platform linux/amd64 \
     -t "ghcr.io/$ORG/zenit-$s:$VERSION" \
     "laboratorio/servicios/$s"
