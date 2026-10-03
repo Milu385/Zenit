@@ -1,0 +1,10 @@
+{
+  "descripcion": "Dia laboral con valle de madrugada y pico a media tarde, hora de Colombia. Fines de semana al 60 %.",
+  "base_rps": 6,
+  "utc_offset_h": -5,
+  "horas": [0.30, 0.30, 0.30, 0.30, 0.32, 0.40, 0.55, 0.75, 0.90, 1.00, 1.00, 0.95,
+            0.90, 1.00, 1.10, 1.20, 1.20, 1.10, 0.95, 0.80, 0.65, 0.50, 0.40, 0.33],
+  "fin_de_semana": 0.6,
+  "ruido": 0.10,
+  "semilla": 7
+}

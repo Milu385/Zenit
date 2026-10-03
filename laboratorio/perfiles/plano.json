@@ -1,0 +1,9 @@
+{
+  "descripcion": "Tasa constante, para pruebas manuales. No cumple H-023.",
+  "base_rps": 5,
+  "utc_offset_h": 0,
+  "horas": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+  "fin_de_semana": 1.0,
+  "ruido": 0.0,
+  "semilla": 1
+}
