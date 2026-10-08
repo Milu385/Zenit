@@ -4,6 +4,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY carga.py .
+COPY carga.py perfil.py ./
 
 CMD ["python", "-u", "carga.py"]

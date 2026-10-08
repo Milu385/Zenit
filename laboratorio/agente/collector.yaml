@@ -24,6 +24,28 @@ receivers:
       grpc:
         endpoint: 0.0.0.0:4317
 
+  # verdad de referencia del laboratorio (H-024). El inyector escribe una
+  # linea JSON por evento; aqui se lee tal cual, sin interpretarla, y viaja
+  # como registro por el mismo canal que las metricas. La posicion de lectura
+  # se guarda en el almacenamiento persistente: un reinicio del agente no
+  # reenvia ni salta lineas.
+  filelog/verdad:
+    include: [/var/lib/zenit-lab/verdad.jsonl]
+    start_at: beginning
+    storage: file_storage/cola
+    poll_interval: 1s
+
+connectors:
+  # metricas de llamadas y duracion por servicio, a partir de las trazas
+  # (H-028: una caida de servicio no se ve en las metricas del anfitrion).
+  # Acumuladas: la tasa es la diferencia entre dos puntos.
+  spanmetrics:
+    metrics_flush_interval: ${env:INTERVALO_METRICAS}
+    aggregation_temporality: AGGREGATION_TEMPORALITY_CUMULATIVE
+    histogram:
+      explicit:
+        buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s]
+
 processors:
   # los atributos que cambian entre entornos entran por variables,
   # no editando este archivo
@@ -75,14 +97,45 @@ exporters:
       max_interval: 60s
       max_elapsed_time: 900s
 
+  # La verdad de referencia va por su propio exportador: no se descarta
+  # nunca (max_elapsed_time 0 = reintentar sin limite) y no comparte cola
+  # con las metricas, que pueden perderse tras 15 minutos sin plataforma.
+  # Son pocas lineas al dia; esperar lo que haga falta no cuesta nada.
+  otlp/verdad:
+    endpoint: ${env:DESTINO_OTLP}
+    headers:
+      authorization: "Bearer ${env:TOKEN_INGESTA}"
+    tls:
+      insecure: ${env:OTLP_INSEGURO}
+      ca_file: ${env:RUTA_CA}
+    sending_queue:
+      enabled: true
+      storage: file_storage/cola
+      num_consumers: 1
+      queue_size: 1000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 60s
+      max_elapsed_time: 0
+
 service:
   extensions: [file_storage/cola, health_check]
   pipelines:
     metrics:
-      receivers:  [hostmetrics, otlp]
+      receivers:  [hostmetrics, otlp, spanmetrics]
       processors: [resource, batch]
       exporters:  [otlp]
+    # Las trazas solo alimentan a spanmetrics. Guardarlas en la plataforma es
+    # H-017 (epica 1); mandarlas ahora llenaria su disco con archivos que
+    # nadie lee.
     traces:
       receivers:  [otlp]
       processors: [resource, batch]
-      exporters:  [otlp]
+      exporters:  [spanmetrics]
+    # Sin batch: una linea leida y retenida en memoria se perderia si el agente
+    # muere antes de enviarla; asi pasa directo a la cola persistente.
+    logs:
+      receivers:  [filelog/verdad]
+      processors: [resource]
+      exporters:  [otlp/verdad]

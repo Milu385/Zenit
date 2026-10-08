@@ -19,3 +19,6 @@ deploy/tls/
 .pytest_cache/
 node_modules/
 frontend/dist/
+
+# exportaciones de datos del laboratorio (scripts/exportar.sh)
+exportaciones/

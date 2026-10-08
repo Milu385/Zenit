@@ -33,7 +33,7 @@ services:
     # sin perfil: es la base de todo, siempre arranca
 
   catalogo:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-catalogo:${VERSION_APP:-0.1.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-catalogo:${VERSION_APP:-0.2.0}
     build: ./servicios/catalogo
     restart: unless-stopped
     init: true             # reenvia SIGTERM: apagado en ~1 s, no en 10
@@ -58,7 +58,7 @@ services:
     profiles: ["completo"]
 
   pedidos:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-pedidos:${VERSION_APP:-0.1.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-pedidos:${VERSION_APP:-0.2.0}
     build: ./servicios/pedidos
     restart: unless-stopped
     init: true             # reenvia SIGTERM: apagado en ~1 s, no en 10
@@ -82,7 +82,7 @@ services:
     <<: *recursos
 
   carga:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-carga:${VERSION_APP:-0.1.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-carga:${VERSION_APP:-0.2.0}
     build: ./servicios/carga
     restart: unless-stopped
     init: true             # reenvia SIGTERM: apagado en ~1 s, no en 10
@@ -90,9 +90,42 @@ services:
     environment:
       URL_PEDIDOS:       http://pedidos:8000/pedidos
       CARGA_RPS:         ${CARGA_RPS:-5}
-      CARGA_CONCURRENCIA: ${CARGA_CONCURRENCIA:-4}
+      CARGA_MAX_EN_VUELO: ${CARGA_MAX_EN_VUELO:-50}
       CARGA_DURACION:    ${CARGA_DURACION:-0}
+      # perfil de H-023; vacio = CARGA_RPS constante
+      CARGA_PERFIL:      ${CARGA_PERFIL:-}
+    volumes:
+      - ./perfiles:/perfiles:ro
     profiles: ["carga"]
+
+  # Inyector de fallos y campana desatendida (epica 2). Opera solo sobre este
+  # nodo: no tiene red (network_mode: none), asi que no puede alcanzar la
+  # plataforma (RF-LAB-04). Su unica salida es el archivo de verdad de
+  # referencia, que el agente envia.
+  inyector:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-inyector:${VERSION_APP:-0.2.0}
+    build: ./servicios/inyector
+    restart: unless-stopped
+    init: true
+    network_mode: none
+    # bajo el agente en el reparto de CPU: si hay contencion, el agente sigue midiendo
+    cpu_shares: 256
+    stop_grace_period: 150s    # tiempo para restaurar el nodo y cerrar la inyeccion en curso
+    environment:
+      ZENIT_NODO:       ${ZENIT_NODO:?falta el nombre del nodo}
+      PROYECTO:         zenit-laboratorio
+      SERVICIOS_CAIDA:  ${SERVICIOS_CAIDA:-catalogo,pedidos}
+      CAMPANA_SEMILLA:  ${CAMPANA_SEMILLA:-1}
+      CALENTAMIENTO_H:  ${CALENTAMIENTO_H:-12}
+      INTERVALO_MIN:    ${INTERVALO_MIN:-60}
+      INTERVALO_MAX:    ${INTERVALO_MAX:-150}
+      NORMAL_MIN:       ${NORMAL_MIN:-45}
+      CAMPANA_TIPOS:    ${CAMPANA_TIPOS:-cpu,memoria,disco_gradual,disco_abrupto,caida}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # solo para detener y levantar servicios de este nodo
+      - verdad:/var/lib/zenit-lab
+      - relleno:/datos/relleno                     # vive en el disco raiz del nodo
+    profiles: ["laboratorio"]
 
   agente:
     image: otel/opentelemetry-collector-contrib:0.116.1
@@ -110,6 +143,7 @@ services:
       - ./agente/collector.yaml:/etc/otelcol/collector.yaml:ro
       - ./agente/ca.crt:/etc/otelcol/ca.crt:ro   # publico: va versionado
       - agente_cola:/var/lib/otelcol/cola
+      - verdad:/var/lib/zenit-lab:ro               # verdad de referencia del inyector
       - /:/hostfs:ro,rslave
     pid: host
     profiles: ["observado"]
@@ -117,3 +151,5 @@ services:
 volumes:
   almacen_datos:
   agente_cola:
+  verdad:
+  relleno:

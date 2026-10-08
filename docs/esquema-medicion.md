@@ -25,7 +25,7 @@ Una base por nivel de resolución, porque la retención se configura por base:
 
 | Base | Contenido | Retención | Estado |
 |---|---|---|---|
-| `zenit_raw` | Observaciones a 10 s | 7 días | En uso |
+| `zenit_raw` | Observaciones a 10 s | 30 días mientras dure la campaña del laboratorio (7 en el diseño) | En uso |
 | `zenit_1m` | Resúmenes por minuto | 30 días | Creada, vacía hasta H-018 |
 | `zenit_1h` | Resúmenes por hora | 180 días | Creada, vacía hasta H-018 |
 
@@ -130,6 +130,7 @@ Resultado del 3 de octubre de 2026: 26 tablas en `zenit_raw`, todas en OK, entre
 | Diseño (v1) | Implementado | Motivo |
 |---|---|---|
 | Retención de `zenit_1h`: 6 meses | 180 días | InfluxDB expresa la retención en días |
+| Retención de `zenit_raw`: 7 días | 30 días durante la campaña del laboratorio | La evaluación necesita las semanas completas aunque falle una exportación diaria |
 | La retención no se puede cambiar después de crear la base | Se puede cambiar (InfluxDB 3.4 o posterior) | Comprobado en el código fuente del motor |
 | Una dimensión opcional se escribe como `desconocido` | Solo las canónicas usan `desconocido`; las dimensiones propias pueden quedar nulas | Rellenarlas obligaría a conocer de antemano las dimensiones de cada métrica |
 | Métricas internas de Zenit en una base propia | Por ahora en `/metricas` de la ingesta, en JSON | Suficiente para la épica 0; se revisa con H-021 |

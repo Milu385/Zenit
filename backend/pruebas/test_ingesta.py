@@ -379,3 +379,57 @@ def test_base_aun_no_creada_se_reintenta_en_vez_de_perder(catalogo):
         srv.stop(0)
         srv_influx.shutdown()
     assert c["emitidas"] == 1 and c["rechazadas_por_almacen"] == 0
+
+
+# ------------------------------------------------------------------ registros (verdad de referencia)
+def _peticion_de_registros(cuerpo):
+    from opentelemetry.proto.collector.logs.v1 import logs_service_pb2
+    from opentelemetry.proto.logs.v1 import logs_pb2
+
+    reg = logs_pb2.LogRecord(time_unix_nano=T0)
+    reg.body.string_value = cuerpo
+    return logs_service_pb2.ExportLogsServiceRequest(resource_logs=[logs_pb2.ResourceLogs(
+        resource=otlp.recurso(), scope_logs=[logs_pb2.ScopeLogs(log_records=[reg])])])
+
+
+def _stub_registros(nucleo):
+    from opentelemetry.proto.collector.logs.v1 import logs_service_pb2_grpc
+
+    srv = servidor_grpc(nucleo, TOKEN, 0)
+    puerto = srv.add_insecure_port("127.0.0.1:0")
+    srv.start()
+    return srv, logs_service_pb2_grpc.LogsServiceStub(grpc.insecure_channel(f"127.0.0.1:{puerto}"))
+
+
+def test_registros_se_guardan_con_las_etiquetas_del_activo(catalogo, tmp_path):
+    nucleo = PuntoDeEntrada(catalogo, servicio_por_defecto="host")
+    nucleo.destinos_archivo["registros"] = DestinoJsonl(
+        tmp_path, "registros", lambda n: nucleo.contadores.sumar("registros", "emitidas", n))
+    srv, stub = _stub_registros(nucleo)
+    try:
+        enviar(stub, _peticion_de_registros('{"uid":"u1","evento":"inicio"}'))
+        (archivo,) = tmp_path.glob("registros-*.jsonl")
+        linea = json.loads(archivo.read_text())
+        assert linea["zenit_asset_id"] == "activo-aws-nodo-01"
+        assert json.loads(linea["cuerpo"]) == {"uid": "u1", "evento": "inicio"}
+    finally:
+        srv.stop(0)
+
+
+def test_si_no_se_puede_guardar_un_registro_el_agente_debe_reintentar(catalogo):
+    """Responder OK sin guardar perderia la verdad de referencia en silencio."""
+    nucleo = PuntoDeEntrada(catalogo, servicio_por_defecto="host")
+
+    class DiscoLleno:
+        def aceptar_registros(self, registros, puntos):
+            raise OSError(28, "No space left on device")
+
+    nucleo.destinos_archivo["registros"] = DiscoLleno()
+    srv, stub = _stub_registros(nucleo)
+    try:
+        with pytest.raises(grpc.RpcError) as e:
+            enviar(stub, _peticion_de_registros('{"uid":"u1","evento":"inicio"}'))
+        assert e.value.code() == grpc.StatusCode.UNAVAILABLE  # el Collector reintenta UNAVAILABLE
+        assert nucleo.contadores.instantanea()["senales"]["registros"]["errores"] == 1
+    finally:
+        srv.stop(0)
