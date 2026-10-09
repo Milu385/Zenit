@@ -67,5 +67,11 @@ class RepositorioSeries(Protocol):
     ) -> Respuesta:
         """La serie de una metrica para un activo y un rango."""
 
+    def volumen_fuentes(self) -> dict:
+        """{(activo, host_name, senal): {"recibidas_5min": n, "errores_1h": n}} (H-021)."""
+
+    def cpu_reciente(self, minutos: int = 5) -> dict:
+        """{activo: fraccion de CPU ocupada} en los ultimos minutos, para el inventario."""
+
     def disponible(self) -> bool:
         """True si el motor responde."""

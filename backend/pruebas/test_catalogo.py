@@ -283,6 +283,12 @@ def test_api_lista_activos_y_la_ultima_ejecucion(pg, tmp_path):
         def disponible(self):
             return True
 
+        def cpu_reciente(self, minutos=5):
+            return {}
+
+        def volumen_fuentes(self):
+            return {}
+
     cliente = TestClient(crear_app(RepoQuieto(), tmp_path / "no-existe.json", pg_url=PG))
     (a,) = cliente.get("/api/activos").json()
     assert a["id"] == "activo-do-zenit-nodo-do" and a["proveedor"] == "digitalocean"

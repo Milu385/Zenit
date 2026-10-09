@@ -1,6 +1,16 @@
 // Cliente de la API de Zenit. Toda llamada pasa por aqui.
 
-export type Activo = { id: string; claves: string[] };
+export type EstadoActivo = "ok" | "atencion" | "degradado" | "sin_datos" | "retirado";
+
+// Contrato v1.2, seccion 3. Los campos opcionales no existen sin PostgreSQL.
+export type Activo = {
+  id: string;
+  claves: string[];
+  nombre?: string;
+  proveedor?: string;
+  estado?: EstadoActivo;
+  ultima_recepcion?: string | null;
+};
 
 export type Serie = {
   etiquetas: Record<string, string>;
@@ -18,6 +28,8 @@ export type RespuestaSerie = {
   intervalos_esperados: number;
   intervalos_vacios: number;
   series_omitidas: number;
+  fuente_degradada?: boolean; // RF-VIS-08: mas de 5 min sin recibir metricas del activo
+  ultima_recepcion?: string | null;
 };
 
 export class ErrorApi extends Error {

@@ -17,6 +17,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
+from zenit import salud as salud_fuentes
 from zenit.influx import ClienteInflux, ErrorInflux
 from zenit.repositorio import ErrorConsulta, RepositorioSeries
 
@@ -49,12 +50,23 @@ def _iso(v):
     return v.isoformat() if hasattr(v, "isoformat") else v
 
 
-def _activo_publico(a: dict) -> dict:
-    """La forma del contrato (seccion 3, Activos). El estado de salud lo
-    completa H-021; aqui solo se distingue retirado."""
+def _serializar(v):
+    if isinstance(v, dict):
+        return {k: _serializar(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_serializar(x) for x in v]
+    return _iso(v)
+
+
+def _activo_publico(a: dict, salud_activo: Optional[dict] = None) -> dict:
+    """La forma del contrato (seccion 3, Activos)."""
+    s = salud_activo or {}
     return {
         "id": a["id"], "nombre": a["nombre"], "proveedor": a["proveedor"], "region": a["region"],
-        "entorno": a["entorno"], "estado": "retirado" if a["estado"] == "retirado" else "sin_datos",
+        "entorno": a["entorno"], "estado": s.get("estado", "retirado" if a["estado"] == "retirado" else "sin_datos"),
+        "ultima_recepcion": _iso(s.get("ultima_recepcion")),
+        "incidentes_abiertos": s.get("incidentes_abiertos", 0),
+        "cpu_reciente": s.get("cpu_reciente"),
         "origen": a["origen"], "visto": _iso(a["visto"]), "retirado_en": _iso(a["retirado_en"]),
         "claves": [c for c in a["claves"] if ":" not in c],                 # host.name: lo que llega en la telemetria
         "ids_nativos": [c for c in a["claves"] if ":" in c],                 # proveedor:tipo/id
@@ -82,20 +94,51 @@ def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path, pg_url: Optio
     def salud():
         return {"estado": "ok", "almacen": repositorio.disponible()}
 
-    def _catalogo_pg() -> list:
+    def _pg(funcion):
+        import psycopg
+
         from zenit import catalogo
 
         try:
             with catalogo.conectar(pg_url) as c:
-                return catalogo.listar_activos(c)
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(503, detail=f"el catalogo no respondio: {type(e).__name__}")
+                return funcion(c)
+        except (psycopg.OperationalError, OSError) as e:
+            raise HTTPException(503, detail=f"PostgreSQL no respondio: {type(e).__name__}")
+
+    def _catalogo_pg() -> list:
+        from zenit import catalogo
+
+        return _pg(catalogo.listar_activos)
+
+    def _inventario() -> list:
+        from zenit import catalogo
+
+        def leer(c):
+            return catalogo.listar_activos(c), salud_fuentes.fuentes_pg(c), salud_fuentes.incidentes_abiertos(c)
+
+        lista, fuentes, incidentes = _pg(leer)
+        ultimas = salud_fuentes.ultima_recepcion_por_activo(fuentes)
+        try:
+            cpu = repositorio.cpu_reciente()
+        except ErrorInflux:
+            cpu = {}           # el inventario se muestra aunque el motor no responda
+        ahora = datetime.now(timezone.utc)
+        salida = []
+        for a in lista:
+            datos = {"ultima_recepcion": ultimas.get(a["id"]), "incidentes_abiertos": incidentes.get(a["id"], 0),
+                     "cpu_reciente": cpu.get(a["id"])}
+            datos["estado"] = salud_fuentes.estado_activo(a, datos["ultima_recepcion"], datos["incidentes_abiertos"], ahora)
+            salida.append(_activo_publico(a, datos))
+        return salida
 
     @app.get("/api/activos", tags=["activos"])
     def activos():
-        """Activos del catalogo (H-009), con las claves por las que se resuelven."""
+        """Inventario: activos del catalogo (H-009) con su estado (H-021).
+
+        estado: ok | atencion (incidentes abiertos) | degradado (mas de 5 min
+        sin recibir metricas) | sin_datos (nunca reporto) | retirado."""
         if pg_url:
-            return [_activo_publico(a) for a in _catalogo_pg()]
+            return _inventario()
         try:
             datos = json.loads(Path(ruta_catalogo).read_text())
         except FileNotFoundError:
@@ -111,9 +154,9 @@ def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path, pg_url: Optio
     def activo_por_id(activo: str):
         if not pg_url:
             raise HTTPException(404, detail="sin catalogo en PostgreSQL")
-        for a in _catalogo_pg():
+        for a in _inventario():
             if a["id"] == activo:
-                return _activo_publico(a)
+                return a
         raise HTTPException(404, detail=f"no existe el activo {activo!r}")
 
     @app.get("/api/catalogo/descubrimientos", tags=["activos"])
@@ -123,12 +166,35 @@ def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path, pg_url: Optio
             return {"ultimas": [], "recientes": []}
         from zenit import catalogo
 
-        try:
-            with catalogo.conectar(pg_url) as c:
-                datos = catalogo.ejecuciones(c)
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(503, detail=f"el catalogo no respondio: {type(e).__name__}")
+        datos = _pg(catalogo.ejecuciones)
         return {k: [{c: _iso(v) for c, v in f.items()} for f in filas] for k, filas in datos.items()}
+
+    @app.get("/api/fuentes", tags=["fuentes"])
+    def fuentes():
+        """Cada fuente con su ultima recepcion, su volumen reciente y sus errores (H-021).
+
+        Una fuente con mas de 5 minutos sin recibir metricas queda `degradado`.
+        Los activos del catalogo que nunca reportaron aparecen como `sin_datos`."""
+        if not pg_url:
+            return []
+        from zenit import catalogo
+
+        filas, lista = _pg(lambda c: (salud_fuentes.fuentes_pg(c), catalogo.listar_activos(c, incluir_retirados=False)))
+        try:
+            volumen = repositorio.volumen_fuentes()
+        except ErrorInflux:
+            volumen = {}
+        ahora = datetime.now(timezone.utc)
+        salida = salud_fuentes.agrupar_fuentes(filas, volumen, ahora)
+        con_fuente = {f["activo"] for f in salida}
+        for a in lista:
+            if a["id"] not in con_fuente:
+                salida.append({"activo": a["id"], "host_name": a["nombre"], "proveedor": a["proveedor"],
+                               "huerfana": False, "senales": {}, "ultima_recepcion": None,
+                               "estado": "sin_datos", "minutos_sin_datos": None})
+        orden = {"degradado": 0, "sin_datos": 1, "ok": 2}
+        salida.sort(key=lambda f: (orden[f["estado"]], f["activo"], f["host_name"]))
+        return [_serializar(f) for f in salida]
 
     @app.get("/api/fuentes/huerfanas", tags=["fuentes"])
     def huerfanas():
@@ -140,11 +206,7 @@ def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path, pg_url: Optio
             return []
         from zenit import catalogo
 
-        try:
-            with catalogo.conectar(pg_url) as c:
-                filas = catalogo.listar_huerfanas(c)
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(503, detail=f"el catalogo no respondio: {type(e).__name__}")
+        filas = _pg(catalogo.listar_huerfanas)
         return [{k: _iso(v) for k, v in f.items()} for f in filas]
 
     @app.get("/api/activos/{activo}/metricas", tags=["series"])
@@ -172,7 +234,17 @@ def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path, pg_url: Optio
         """Serie de una metrica para un activo y un rango, promediada cada 10 s."""
         inicio, fin = _rango(desde, hasta)
         r = repositorio.serie(activo, metrica, inicio, fin, agrupar=agrupar or None, filtros=_filtros(filtro))
+        # RF-VIS-08: la grafica avisa si la fuente esta degradada
+        ultima = None
+        if pg_url:
+            try:
+                ultima = _pg(lambda c: salud_fuentes.ultima_recepcion_por_activo(salud_fuentes.fuentes_pg(c))).get(activo)
+            except HTTPException:
+                ultima = None    # sin PostgreSQL la serie se sirve igual, sin el aviso
+        degradada = salud_fuentes.estado_de(ultima, datetime.now(timezone.utc)) == "degradado"
         return {
+            "fuente_degradada": degradada,
+            "ultima_recepcion": _iso(ultima),
             "activo": r.activo,
             "metrica": r.metrica,
             "resolucion": r.resolucion.value,

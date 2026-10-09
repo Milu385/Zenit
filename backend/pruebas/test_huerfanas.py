@@ -112,6 +112,12 @@ def test_api_lista_huerfanas(pg, tmp_path):
         def disponible(self):
             return True
 
+        def cpu_reciente(self, minutos=5):
+            return {}
+
+        def volumen_fuentes(self):
+            return {}
+
     cliente = TestClient(crear_app(RepoQuieto(), tmp_path / "x.json", pg_url=PG))
     (h,) = cliente.get("/api/fuentes/huerfanas").json()
     assert h["clave"] == "zenit-nodo-do" and h["metricas"] == 120 and h["resuelve_a"] is None

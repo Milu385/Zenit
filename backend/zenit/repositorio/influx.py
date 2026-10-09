@@ -92,9 +92,11 @@ class RepositorioInflux:
         bd: str = "zenit_raw",
         ventana_metricas: timedelta = timedelta(hours=1),
         cache_s: float = 30.0,
+        bd_interna: str = "zenit_interno",
     ):
         self._cliente = cliente
         self._bd = bd
+        self._bd_interna = bd_interna
         self._ventana = ventana_metricas
         self._cache_s = cache_s
         self._candado = threading.Lock()
@@ -258,6 +260,42 @@ class RepositorioInflux:
             intervalos_vacios=contar_vacios(list(con_datos), desde, limite),
             series_omitidas=max(0, len(claves) - MAXIMO_SERIES),
         )
+
+    # ------------------------------------------------------------ salud (H-021)
+    def volumen_fuentes(self) -> dict:
+        """{(activo, host_name, senal): {recibidas_5min, errores_1h}} desde zenit_interno."""
+        ahora = datetime.now(timezone.utc)
+        salida: dict = {}
+        consultas = (
+            ("recibidas_5min", "zenit_fuente_recibidas", ahora - timedelta(minutes=5)),
+            ("errores_1h", "zenit_fuente_errores", ahora - timedelta(hours=1)),
+        )
+        for campo, tabla, desde in consultas:
+            try:
+                filas = self._cliente.consultar(
+                    self._bd_interna,
+                    f'SELECT "zenit_asset_id" AS a, "host_name" AS h, "senal" AS s, sum("value") AS n FROM "{tabla}" '
+                    f"WHERE time >= {_literal_tiempo(desde)} GROUP BY 1, 2, 3",
+                )
+            except ErrorInflux as e:
+                if e.estado not in (400, 404):   # la tabla aun no existe: nunca hubo errores
+                    raise
+                filas = []
+            for f in filas:
+                salida.setdefault((f["a"], f["h"], f["s"]), {})[campo] = int(f.get("n") or 0)
+        return salida
+
+    def cpu_reciente(self, minutos: int = 5) -> dict:
+        """{activo: fraccion ocupada} en los ultimos minutos: 1 - promedio del estado idle."""
+        if "system_cpu_utilization" not in self._columnas():
+            return {}
+        desde = _literal_tiempo(datetime.now(timezone.utc) - timedelta(minutes=minutos))
+        filas = self._cliente.consultar(
+            self._bd,
+            'SELECT "zenit_asset_id" AS a, 1 - avg("value") AS v FROM "system_cpu_utilization" '
+            f"WHERE \"state\" = 'idle' AND time >= {desde} GROUP BY 1",
+        )
+        return {f["a"]: round(float(f["v"]), 4) for f in filas if f.get("v") is not None}
 
     def disponible(self) -> bool:
         return self._cliente.disponible()

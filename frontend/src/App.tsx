@@ -140,7 +140,12 @@ export default function App() {
     if (activos.estado === "cargando") return <Cargando texto="Cargando activos..." />;
     if (activos.estado === "error") return <ErrorVista mensaje={activos.mensaje} reintentar={reintentar} />;
     if (activos.datos.length === 0)
-      return <SinDatos titulo="El catalogo esta vacio" detalle="Agrega el nodo a deploy/catalogo/catalogo.json." />;
+      return (
+        <SinDatos
+          titulo="El catalogo esta vacio"
+          detalle="El descubrimiento todavia no encontro nodos. Para admitir uno a mano: zenit.admin catalogo admitir."
+        />
+      );
     if (metricas.estado === "cargando") return <Cargando texto="Buscando metricas del activo..." />;
     if (metricas.estado === "error") return <ErrorVista mensaje={metricas.mensaje} reintentar={reintentar} />;
     if (metricas.datos.length === 0)
@@ -162,6 +167,13 @@ export default function App() {
       );
     return (
       <>
+        {r.fuente_degradada && (
+          <p className="aviso" role="alert">
+            Datos desactualizados: la fuente no reporta desde{" "}
+            {r.ultima_recepcion ? new Date(r.ultima_recepcion).toLocaleString() : "hace mas de 5 minutos"}. Lo que
+            ves puede no reflejar el estado actual del activo.
+          </p>
+        )}
         <Grafica respuesta={r} refrescando={refrescando} />
         <p className="pie">
           Resolucion {r.resolucion} · {r.intervalos_esperados - r.intervalos_vacios} de {r.intervalos_esperados}{" "}
@@ -200,6 +212,7 @@ export default function App() {
               activos.datos.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.id}
+                  {a.estado && a.estado !== "ok" ? ` (${a.estado.replace("_", " ")})` : ""}
                 </option>
               ))}
           </select>

@@ -111,3 +111,11 @@ body { margin: 0; background: var(--fondo); color: var(--texto); }
   .filtros label { flex: 1 1 140px; }
   .tabla { display: block; overflow-x: auto; }
 }
+
+/* RF-VIS-08: aviso de fuente degradada. Texto explicito, no solo color. */
+.aviso {
+  border-left: 4px solid var(--error);
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 0.75rem;
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+}

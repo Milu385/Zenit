@@ -41,6 +41,9 @@ BASES = (
     ("zenit_1h", os.environ.get("RETENCION_1H", "180d")),
 )
 LIMITE_COLUMNAS = int(os.environ.get("LIMITE_COLUMNAS", "500"))
+# Cuarta base: metricas de la propia plataforma (H-021). No lleva las etiquetas
+# canonicas de los activos, asi que verificar no la revisa.
+BASE_INTERNA = ("zenit_interno", os.environ.get("RETENCION_INTERNA", "7d"))
 
 
 def _cliente() -> ClienteInflux:
@@ -48,7 +51,7 @@ def _cliente() -> ClienteInflux:
 
 
 def crear_bases(cliente: ClienteInflux) -> int:
-    for bd, retencion in BASES:
+    for bd, retencion in (*BASES, BASE_INTERNA):
         if cliente.crear_base(bd, retencion):
             print(f"creada   {bd:10s} retencion {retencion}")
         else:

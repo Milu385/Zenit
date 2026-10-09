@@ -64,6 +64,7 @@ services:
       RETENCION_RAW: ${RETENCION_RAW:-30d}
       RETENCION_1M: ${RETENCION_1M:-30d}
       RETENCION_1H: ${RETENCION_1H:-180d}
+      RETENCION_INTERNA: ${RETENCION_INTERNA:-7d}
     depends_on:
       influxdb:
         condition: service_healthy

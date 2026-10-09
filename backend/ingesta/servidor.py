@@ -35,8 +35,9 @@ from opentelemetry.proto.collector.trace.v1 import trace_service_pb2, trace_serv
 
 from destinos import DestinoInflux, DestinoJsonl, Lote
 from extraccion import atributos, extraer_puntos, resolver_identidad, valor_de
-from zenit.catalogo import AcumuladorHuerfanas, CatalogoPG
-from zenit.influx import ClienteInflux
+from zenit import salud
+from zenit.catalogo import AcumuladorHuerfanas, CatalogoPG, conectar
+from zenit.influx import ClienteInflux, ErrorInflux
 from zenit.protocolo_linea import construir_linea
 
 log = logging.getLogger("ingesta")
@@ -166,14 +167,23 @@ class PuntoDeEntrada:
         self.contadores = Contadores()
         self.huerfanas = AcumuladorHuerfanas()   # origenes sin resolver, para la vista de H-011
         self.ultimo_volcado_huerfanas: Optional[str] = None
+        # salud de las fuentes (H-021): una cuenta para PostgreSQL y otra para
+        # zenit_interno, porque cada destino falla y se reintenta por su lado
+        self.fuentes_pg = salud.AcumuladorFuentes()
+        self.fuentes_interno = salud.AcumuladorFuentes()
+        self.interno: Optional[ClienteInflux] = None
+        self.bd_interna = salud.BD_INTERNA
+        self.ultimo_volcado_salud: Optional[str] = None
         self.destino_metricas = None
         self.destinos_archivo: dict = {}
 
     def identidad(self, recurso):
         return resolver_identidad(atributos(recurso.attributes), self.catalogo.actual(), self.servicio_por_defecto)
 
-    def _sumar_huerfanas(self, senal: str, por_bloque: list) -> None:
-        for ident, n in por_bloque:
+    def _contar_fuentes(self, senal: str, por_bloque: list) -> None:
+        for ident, n, *errores in por_bloque:
+            self.fuentes_pg.sumar(ident.etiquetas, senal, n, errores[0] if errores else 0)
+            self.fuentes_interno.sumar(ident.etiquetas, senal, n, errores[0] if errores else 0)
             if ident.huerfana and n:
                 self.huerfanas.sumar(ident.valor_clave, ident.clave_nativa,
                                      ident.etiquetas.get("cloud_provider"), senal, n)
@@ -189,7 +199,7 @@ class PuntoDeEntrada:
         por_bloque = []
         for bloque in request.resource_metrics:
             ident = self.identidad(bloque.resource)
-            validos_antes = validos
+            validos_antes, errores_antes = validos, errores
             for alcance in bloque.scope_metrics:
                 for metrica in alcance.metrics:
                     for punto in extraer_puntos(metrica, ahora):
@@ -225,7 +235,7 @@ class PuntoDeEntrada:
                         registros.extend(suyos)
                         validos += 1
                         huerfanos += ident.huerfana
-            por_bloque.append((ident, validos - validos_antes))
+            por_bloque.append((ident, validos - validos_antes, errores - errores_antes))
 
         # Se cuenta como recibido ANTES de entregar: el escritor puede sumar
         # emitidas apenas lo tiene, y en_cola nunca debe quedar negativo. Si
@@ -247,7 +257,7 @@ class PuntoDeEntrada:
         c.sumar("metricas", "sin_valor", sin_valor)
         c.sumar("metricas", "errores", errores)
         c.sumar("metricas", "huerfanas", huerfanos)
-        self._sumar_huerfanas("metricas", por_bloque)
+        self._contar_fuentes("metricas", por_bloque)
         if jsonl:
             c.sumar("metricas", "emitidas", validos)
         return True
@@ -276,7 +286,7 @@ class PuntoDeEntrada:
             log.exception("no se pudo escribir %s", senal)
             self.contadores.sumar(senal, "errores", len(registros))
             return False
-        self._sumar_huerfanas(senal, por_bloque)
+        self._contar_fuentes(senal, por_bloque)
         return True
 
     def estado(self) -> dict:
@@ -291,7 +301,42 @@ class PuntoDeEntrada:
             },
             "catalogo": self.catalogo.estado(),
             "huerfanas_volcadas": self.ultimo_volcado_huerfanas,
+            "salud_volcada": self.ultimo_volcado_salud,
         }
+
+    def indicadores(self) -> dict:
+        """Lo que se guarda de la propia ingesta en zenit_interno (H-031)."""
+        c = self.contadores.instantanea()
+        return {
+            "lineas_pendientes": getattr(self.destino_metricas, "pendientes", 0),
+            "contrapresion": c["contrapresion"],
+            "peticiones_rechazadas": c["rechazadas"],
+            "rechazadas_por_almacen": sum(v["rechazadas_por_almacen"] for v in c["senales"].values()),
+            "memoria_bytes": memoria_residente(),
+        }
+
+    def volcar_salud(self, url: Optional[str]) -> None:
+        """Cada 10 s. Un destino caido no frena al otro ni a la recepcion."""
+        momento = time.time_ns() // 10_000_000_000 * 10_000_000_000
+        deltas = self.fuentes_interno.tomar()
+        if self.interno is not None:
+            try:
+                lineas = salud.lineas_internas(deltas, self.indicadores(), momento)
+                if lineas:
+                    self.interno.escribir(self.bd_interna, "\n".join(lineas))
+            except ErrorInflux as e:
+                # metricas internas: se pierden, no compiten con las de los activos
+                log.warning("no se pudo escribir en %s: %s", self.bd_interna, e)
+        if url:
+            deltas_pg = self.fuentes_pg.tomar()
+            if deltas_pg:
+                try:
+                    with conectar(url) as c:
+                        salud.guardar_pg(c, deltas_pg)
+                    self.ultimo_volcado_salud = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                except Exception as e:  # noqa: BLE001
+                    self.fuentes_pg.devolver(deltas_pg)
+                    log.warning("no se pudo guardar la salud de las fuentes: %s", e)
 
     def volcar_huerfanas(self, url: str) -> None:
         """Lleva a PostgreSQL lo acumulado. Si falla, se reintenta en el
@@ -302,6 +347,18 @@ class PuntoDeEntrada:
                 self.ultimo_volcado_huerfanas = datetime.now(timezone.utc).isoformat(timespec="seconds")
         except Exception as e:  # noqa: BLE001
             log.warning("no se pudieron volcar las huerfanas: %s", e)
+
+
+def memoria_residente() -> Optional[int]:
+    """Memoria residente del proceso en bytes (Linux)."""
+    try:
+        with open("/proc/self/status") as f:
+            for linea in f:
+                if linea.startswith("VmRSS:"):
+                    return int(linea.split()[1]) * 1024
+    except OSError:
+        pass
+    return None
 
 
 # ------------------------------------------------------------------ autenticacion
@@ -434,6 +491,9 @@ def construir_desde_entorno() -> PuntoDeEntrada:
         )
     else:
         nucleo.destino_metricas = DestinoJsonl(salida, "metricas", al_escribir=lambda n: None)
+    if os.environ.get("INFLUX_URL"):
+        nucleo.interno = ClienteInflux(os.environ["INFLUX_URL"], os.environ.get("INFLUX_TOKEN", ""), tiempo_limite=5.0)
+        nucleo.bd_interna = os.environ.get("INFLUX_BD_INTERNA", salud.BD_INTERNA)
 
     for senal in ("trazas", "registros"):
         nucleo.destinos_archivo[senal] = DestinoJsonl(
@@ -455,11 +515,15 @@ def principal():
 
     pg_url = os.environ.get("PG_URL")
     parar_volcado = threading.Event()
-    if pg_url:
-        def volcar_cada_tanto():
-            while not parar_volcado.wait(30):
+
+    def volcar_cada_tanto():
+        vuelta = 0
+        while not parar_volcado.wait(10):
+            nucleo.volcar_salud(pg_url)
+            vuelta += 1
+            if pg_url and vuelta % 3 == 0:
                 nucleo.volcar_huerfanas(pg_url)
-        threading.Thread(target=volcar_cada_tanto, name="huerfanas", daemon=True).start()
+    threading.Thread(target=volcar_cada_tanto, name="volcador", daemon=True).start()
     log.info("ingesta OTLP en %d, admin en %d, metricas hacia %s",
              puerto_otlp, puerto_admin, type(nucleo.destino_metricas).__name__)
 
@@ -470,8 +534,9 @@ def principal():
     log.info("deteniendo: se deja de aceptar y se vacia la cola")
     servidor.stop(grace=5).wait()
     nucleo.destino_metricas.detener(esperar_s=15)   # el compose da 30 s
+    parar_volcado.set()
+    nucleo.volcar_salud(pg_url)
     if pg_url:
-        parar_volcado.set()
         nucleo.volcar_huerfanas(pg_url)
     admin.shutdown()
 
