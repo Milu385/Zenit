@@ -22,3 +22,7 @@ frontend/dist/
 
 # exportaciones de datos del laboratorio (scripts/exportar.sh)
 exportaciones/
+
+# mTLS (H-012): certificados y claves de cliente de los agentes
+tls/clientes/
+laboratorio/agente/cliente/

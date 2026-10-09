@@ -343,6 +343,26 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      # mTLS (H-012): la CA publica, la misma que tienen los agentes
+      - type: bind
+        source: ../laboratorio/agente/ca.crt
+        target: /etc/nginx/tls/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./borde/mtls-${MTLS_MODO:-transicion}.conf
+        target: /etc/nginx/zenit/mtls.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./borde/revocados.map
+        target: /etc/nginx/zenit/revocados.map
+        read_only: true
+        bind:
+          create_host_path: false
+      - borde_registros:/var/log/zenit
     ports:
       - "0.0.0.0:4317:4317"           # OTLP de los nodos
       - "0.0.0.0:443:443"             # interfaz y API, solo IP del equipo
@@ -353,6 +373,7 @@ services:
       retries: 3
 
 volumes:
+  borde_registros:                     # intentos rechazados en el 4317, con su origen
   ch_datos:                            # registros y trazas (7 dias)
   influx_datos:                        # series temporales, sobrevive al reinicio
   ingesta_datos:                       # trazas y registros en archivo

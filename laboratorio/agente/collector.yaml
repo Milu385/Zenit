@@ -95,6 +95,10 @@ exporters:
     tls:
       insecure: ${env:OTLP_INSEGURO}
       ca_file: ${env:RUTA_CA}
+      # mTLS (H-012): el certificado de este nodo. Vacios = sin certificado,
+      # que el borde solo acepta en modo transicion.
+      cert_file: ${env:RUTA_CERT_CLIENTE}
+      key_file: ${env:RUTA_CLAVE_CLIENTE}
     sending_queue:
       enabled: true
       storage: file_storage/cola     # <-- sin esto la cola es solo memoria
@@ -117,6 +121,10 @@ exporters:
     tls:
       insecure: ${env:OTLP_INSEGURO}
       ca_file: ${env:RUTA_CA}
+      # mTLS (H-012): el certificado de este nodo. Vacios = sin certificado,
+      # que el borde solo acepta en modo transicion.
+      cert_file: ${env:RUTA_CERT_CLIENTE}
+      key_file: ${env:RUTA_CLAVE_CLIENTE}
     sending_queue:
       enabled: true
       storage: file_storage/cola

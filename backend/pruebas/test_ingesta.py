@@ -433,3 +433,19 @@ def test_si_no_se_puede_guardar_un_registro_el_agente_debe_reintentar(catalogo):
         assert nucleo.contadores.instantanea()["senales"]["registros"]["errores"] == 1
     finally:
         srv.stop(0)
+
+
+def test_el_cn_del_certificado_distinto_de_host_name_se_cuenta(catalogo, influx):
+    """H-012: el borde pasa el CN del certificado en x-zenit-emisor."""
+    almacen, url = influx
+    nucleo, srv, stub = armar(catalogo, url)
+    try:
+        p = otlp.peticion(otlp.gauge("system.cpu.utilization", [otlp.punto(0.1, T0)]))
+        stub.Export(p, metadata=[("authorization", f"Bearer {TOKEN}"), ("x-zenit-emisor", "O=Zenit,CN=zenit-nodo-aws")],
+                    timeout=5)
+        stub.Export(p, metadata=[("authorization", f"Bearer {TOKEN}"), ("x-zenit-emisor", "O=Zenit,CN=zenit-nodo-do")],
+                    timeout=5)
+        esperar_reposo(nucleo)
+    finally:
+        srv.stop(0)
+    assert nucleo.contadores.instantanea()["emisor_distinto"] == 1

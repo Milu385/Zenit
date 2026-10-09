@@ -17,6 +17,7 @@ Cambios respecto a la version de H-004:
 """
 import hmac
 import json
+import re
 import logging
 import os
 import signal
@@ -65,6 +66,7 @@ class Contadores:
         self._valores = {s: dict.fromkeys(self.CAMPOS, 0) for s in SENALES}
         self.peticiones_rechazadas = 0   # token invalido
         self.contrapresion = 0           # peticiones devueltas por cola llena
+        self.emisor_distinto = 0         # bloques cuyo host.name no es el CN del certificado
 
     def sumar(self, senal: str, campo: str, n: int = 1) -> None:
         if n:
@@ -84,6 +86,7 @@ class Contadores:
             por_senal = {s: dict(v) for s, v in self._valores.items()}
             rechazadas = self.peticiones_rechazadas
             contrapresion = self.contrapresion
+            emisor_distinto = self.emisor_distinto
         for v in por_senal.values():
             v["en_cola"] = (
                 v["recibidas"] - v["emitidas"] - v["sin_valor"] - v["errores"] - v["rechazadas_por_almacen"]
@@ -93,6 +96,7 @@ class Contadores:
             **totales,
             "rechazadas": rechazadas,
             "contrapresion": contrapresion,
+            "emisor_distinto": emisor_distinto,
             "senales": por_senal,
         }
 
@@ -190,8 +194,19 @@ class PuntoDeEntrada:
         self.destinos_analiticos: dict = {}    # registros y trazas a ClickHouse
         self.verdad = None                     # DestinoJsonl de la verdad de referencia
 
-    def identidad(self, recurso):
-        return resolver_identidad(atributos(recurso.attributes), self.catalogo.actual(), self.servicio_por_defecto)
+    def identidad(self, recurso, emisor: Optional[str] = None):
+        ident = resolver_identidad(atributos(recurso.attributes), self.catalogo.actual(), self.servicio_por_defecto)
+        if emisor and emisor != ident.etiquetas["host_name"]:
+            # El certificado dice un nodo y la telemetria dice otro. No se
+            # rechaza (un nodo puede reenviar por otro en el futuro), pero se
+            # cuenta y se avisa: es lo primero que se mira si alguien con un
+            # certificado valido intenta hacerse pasar por otro nodo.
+            with self.contadores._candado:
+                self.contadores.emisor_distinto += 1
+                primera = self.contadores.emisor_distinto == 1
+            if primera or self.contadores.emisor_distinto % 1000 == 0:
+                log.warning("el certificado %s envia telemetria de %s", emisor, ident.etiquetas["host_name"])
+        return ident
 
     def _contar_fuentes(self, senal: str, por_bloque: list) -> None:
         for ident, n, *errores in por_bloque:
@@ -202,7 +217,7 @@ class PuntoDeEntrada:
                                      ident.etiquetas.get("cloud_provider"), senal, n)
 
     # ---- metricas
-    def exportar_metricas(self, request) -> bool:
+    def exportar_metricas(self, request, emisor: Optional[str] = None) -> bool:
         """Convierte y entrega. Devuelve False si el destino no tiene espacio."""
         ahora = time.time_ns()
         lineas, registros = [], []
@@ -211,7 +226,7 @@ class PuntoDeEntrada:
 
         por_bloque = []
         for bloque in request.resource_metrics:
-            ident = self.identidad(bloque.resource)
+            ident = self.identidad(bloque.resource, emisor)
             validos_antes, errores_antes = validos, errores
             for alcance in bloque.scope_metrics:
                 for metrica in alcance.metrics:
@@ -276,7 +291,7 @@ class PuntoDeEntrada:
         return True
 
     # ---- trazas y registros: a archivo hasta la epica 1
-    def exportar_senal(self, senal: str, bloques, extraer) -> bool:
+    def exportar_senal(self, senal: str, bloques, extraer, emisor: Optional[str] = None) -> bool:
         """Registros y trazas (H-016, H-017).
 
         Con ClickHouse configurado van al motor analitico por lotes, como las
@@ -291,7 +306,7 @@ class PuntoDeEntrada:
         """
         filas, huerfanos, por_bloque, verdad = [], 0, [], []
         for bloque in bloques:
-            ident = self.identidad(bloque.resource)
+            ident = self.identidad(bloque.resource, emisor)
             antes = len(filas)
             for item in extraer(bloque):
                 fila = {**ident.etiquetas, **item}
@@ -433,12 +448,21 @@ class Autenticacion(grpc.ServerInterceptor):
 
 
 # ------------------------------------------------------------------ servicios gRPC
+def emisor_de(context) -> Optional[str]:
+    """CN del certificado de cliente, que el borde pasa en x-zenit-emisor (H-012)."""
+    for clave, valor in context.invocation_metadata() or ():
+        if clave == "x-zenit-emisor" and valor:
+            m = re.search(r"CN=([^,/]+)", valor)
+            return m.group(1) if m else None
+    return None
+
+
 class Metricas(metrics_service_pb2_grpc.MetricsServiceServicer):
     def __init__(self, nucleo: PuntoDeEntrada):
         self.nucleo = nucleo
 
     def Export(self, request, context):
-        if not self.nucleo.exportar_metricas(request):
+        if not self.nucleo.exportar_metricas(request, emisor_de(context)):
             context.abort(grpc.StatusCode.UNAVAILABLE, "almacen saturado, reintentar")
         return metrics_service_pb2.ExportMetricsServiceResponse()
 
@@ -452,7 +476,7 @@ class Trazas(trace_service_pb2_grpc.TraceServiceServicer):
             for alcance in bloque.scope_spans:
                 for span in alcance.spans:
                     yield fila_traza(span)
-        if not self.nucleo.exportar_senal("trazas", request.resource_spans, extraer):
+        if not self.nucleo.exportar_senal("trazas", request.resource_spans, extraer, emisor_de(context)):
             context.abort(grpc.StatusCode.UNAVAILABLE, "no se pudo guardar, reintentar")
         return trace_service_pb2.ExportTraceServiceResponse()
 
@@ -466,7 +490,7 @@ class Registros(logs_service_pb2_grpc.LogsServiceServicer):
             for alcance in bloque.scope_logs:
                 for reg in alcance.log_records:
                     yield fila_registro(reg)
-        if not self.nucleo.exportar_senal("registros", request.resource_logs, extraer):
+        if not self.nucleo.exportar_senal("registros", request.resource_logs, extraer, emisor_de(context)):
             context.abort(grpc.StatusCode.UNAVAILABLE, "no se pudo guardar, reintentar")
         return logs_service_pb2.ExportLogsServiceResponse()
 

@@ -143,9 +143,12 @@ services:
       RUTA_CA:          ${RUTA_CA:-/etc/otelcol/ca.crt}
       TOKEN_INGESTA:    ${TOKEN_INGESTA:?falta el token de ingesta}
       INTERVALO_METRICAS: ${INTERVALO_METRICAS:-10s}
+      RUTA_CERT_CLIENTE:  ${RUTA_CERT_CLIENTE:-}
+      RUTA_CLAVE_CLIENTE: ${RUTA_CLAVE_CLIENTE:-}
     volumes:
       - ./agente/collector.yaml:/etc/otelcol/collector.yaml:ro
       - ./agente/ca.crt:/etc/otelcol/ca.crt:ro   # publico: va versionado
+      - ./agente/cliente:/etc/otelcol/cliente:ro # certificado y clave de ESTE nodo: no se versionan
       - agente_cola:/var/lib/otelcol/cola
       - verdad:/var/lib/zenit-lab:ro               # verdad de referencia del inyector
       - /:/hostfs:ro,rslave
