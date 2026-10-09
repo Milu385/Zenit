@@ -18,6 +18,7 @@ Reglas de construccion de las consultas:
 Todo el SQL de este archivo se ejecuta en las pruebas contra DataFusion, el
 motor de consulta que InfluxDB 3 usa por dentro.
 """
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -43,8 +44,14 @@ PUNTOS_OBJETIVO = 1500
 # Core falla las consultas que tocan mas de 432 archivos Parquet (--query-file-limit),
 # y cada tabla produce un archivo por cada 10 minutos con datos. Las consultas
 # largas se parten en tramos que no se acercan al limite y corren en paralelo.
-# Los tramos son multiplos de todos los pasos, asi ningun intervalo queda partido.
-TRAMO = {"1m": timedelta(days=2), "1h": timedelta(days=15)}
+# Los tramos son multiplos de los pasos de su nivel, asi ningun intervalo queda
+# partido (24 h y 10 dias lo son de toda la lista).
+# Con el agregador escribiendo cada minuto una vez (y la hora una vez), un dia
+# de zenit_1m son entre 144 y 288 archivos por tabla y diez dias de zenit_1h,
+# unos 240. Si "zenit.admin espacio" muestra mas archivos por dia, se achican
+# con TRAMO_1M_H y TRAMO_1H_D.
+TRAMO = {"1m": timedelta(hours=int(os.environ.get("TRAMO_1M_H", "24"))),
+         "1h": timedelta(days=int(os.environ.get("TRAMO_1H_D", "10")))}
 BASE_DE = {"1m": "zenit_1m", "1h": "zenit_1h"}
 OBSERVACIONES = {"1m": 6, "1h": 360}     # por fila de resumen, a 10 s
 CAMPOS_RESUMEN = ("value_avg", "value_min", "value_max", "value_count")

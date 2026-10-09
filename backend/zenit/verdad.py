@@ -155,6 +155,13 @@ def cargar(conexion, filas: list[Inyeccion]) -> int:
         for f in filas:
             cur.execute(_UPSERT, {**f.__dict__, "parametros": Jsonb(f.parametros)})
             cambiadas += cur.rowcount
+        # Una inyeccion que llego huerfana (el nodo aun no estaba en el
+        # catalogo) toma su activo en cuanto el catalogo lo conoce (epica 1).
+        cur.execute("SELECT to_regclass('claves_nativas') IS NOT NULL")
+        if cur.fetchone()[0]:
+            cur.execute("UPDATE inyecciones i SET activo = k.activo_id FROM claves_nativas k "
+                        "WHERE i.activo IS NULL AND k.clave = i.nodo")
+            cambiadas += cur.rowcount
     conexion.commit()
     return cambiadas
 

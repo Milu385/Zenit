@@ -282,3 +282,24 @@ def test_api_de_registros_trazas_y_correlacion(ch):
     assert api.get("/api/salud").json()["analitico"] is True
     sin = TestClient(crear_app(RepoQuieto(), "/no/existe.json"))
     assert sin.get("/api/activos/a/registros").status_code == 503
+
+
+def test_reasignar_no_borra_lo_que_llego_despues_de_copiar(ch, monkeypatch):
+    """Hallazgo de la revision: el DELETE borraba filas que nunca se copiaron."""
+    _sembrar(ch, activo="sin_resolver", host="zenit-nodo-x")
+    repo = RepositorioAnalitico(ch)
+    original = ch.ejecutar
+
+    def ejecutar(sql, parametros=None):
+        original(sql, parametros)
+        if sql.startswith("INSERT INTO registros"):       # la ingesta escribe una huerfana mas en ese instante
+            ch.escribir("registros", json.dumps({
+                "momento": "2026-10-09 12:00:00.000000007", "zenit_asset_id": "sin_resolver",
+                "host_name": "zenit-nodo-x", "cuerpo": "tardia"}))
+
+    monkeypatch.setattr(ch, "ejecutar", ejecutar)
+    repo.reasignar_sin_resolver("zenit-nodo-x", "activo-x")
+    monkeypatch.setattr(ch, "ejecutar", original)
+    quedan = ch.consultar("SELECT cuerpo FROM registros WHERE zenit_asset_id = 'sin_resolver'")
+    assert [f["cuerpo"] for f in quedan] == ["tardia"]
+    assert repo.reasignar_sin_resolver("zenit-nodo-x", "activo-x") == 1

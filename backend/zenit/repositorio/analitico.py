@@ -205,6 +205,11 @@ class RepositorioAnalitico:
                 f"FROM {tabla} WHERE zenit_asset_id = {{s:String}} AND host_name = {{h:String}} "
                 f"AND {huella} NOT IN (SELECT {huella} FROM {tabla} WHERE zenit_asset_id = {{a:String}} "
                 f"AND host_name = {{h:String}} AND reasignado = 1)", p)
-            self._ch.ejecutar(f"DELETE FROM {tabla} WHERE zenit_asset_id = {{s:String}} AND host_name = {{h:String}}", p)
+            # solo lo que ya tiene su copia: lo que la ingesta siga escribiendo
+            # como huerfano mientras tanto queda para la siguiente pasada
+            self._ch.ejecutar(
+                f"DELETE FROM {tabla} WHERE zenit_asset_id = {{s:String}} AND host_name = {{h:String}} "
+                f"AND {huella} IN (SELECT {huella} FROM {tabla} WHERE zenit_asset_id = {{a:String}} "
+                f"AND host_name = {{h:String}} AND reasignado = 1)", p)
             total += n
         return total

@@ -158,9 +158,9 @@ def test_rango_largo_se_parte_en_tramos_que_no_tocan_demasiados_archivos(entorno
     monkeypatch.setattr(cliente, "consultar", contar)
     repo = RepositorioInflux(cliente, "zenit_raw", cache_s=0)
     r = repo.serie(ACTIVO, "system_cpu_utilization", FIN - timedelta(days=30), FIN)
-    assert len(consultas) == 15                                 # 30 dias en tramos de 2
+    assert len(consultas) == 30                                 # 30 dias en tramos de 1
     assert r.resolucion == Resolucion.MINUTO and r.intervalo_s == 1800
-    assert modulo.TRAMO["1m"] == timedelta(days=2)
+    assert modulo.TRAMO["1m"] == timedelta(days=1)
 
 
 @con_pg
@@ -214,3 +214,76 @@ def test_retencion_verificable_detecta_filas_fuera_de_la_ventana(capsys):
         assert "espacio.sh" in capsys.readouterr().err
     finally:
         srv.shutdown()
+
+
+def _copia_con_otro_activo(cliente, activo="nuevo"):
+    lineas, t = [], INICIO
+    while t < FIN:
+        lineas.append(construir_linea("system_cpu_utilization",
+                                      {**CANON, "zenit_asset_id": activo, "cpu": "cpu0", "state": "user"}, 0.5, ns(t)))
+        t += timedelta(seconds=10)
+    cliente.escribir("zenit_raw", "\n".join(lineas))
+
+
+def _de(almacen, bd, activo="nuevo"):
+    return [f for f in almacen.bases[bd]["tablas"]["system_cpu_utilization"] if f["zenit_asset_id"] == activo]
+
+
+@con_pg
+def test_un_retroceso_largo_cortado_por_el_presupuesto_se_completa(entorno):
+    """Hallazgo de la revision: el pedido de rehacer se perdia al cortar."""
+    from zenit import catalogo
+
+    cliente, almacen, pg = entorno
+    _agregar(cliente)
+    _copia_con_otro_activo(cliente)                 # lo que hace la asociacion de una huerfana
+    catalogo.retroceder_agregacion(pg, INICIO)
+    for _ in range(6):
+        _agregar(cliente, presupuesto=0)            # un tramo por ciclo
+    assert len(_de(almacen, "zenit_1m")) == 180
+    assert len(_de(almacen, "zenit_1h")) == 3
+
+
+@con_pg
+def test_un_retroceso_a_mitad_de_ciclo_no_deja_la_hora_sin_rehacer(entorno, monkeypatch):
+    """Hallazgo de la revision: la hora se rehacia antes que el minuto."""
+    import zenit.agregacion as ag
+    from zenit import catalogo
+
+    cliente, almacen, pg = entorno
+    _agregar(cliente)
+    original, hecho = ag.resumir, []
+
+    def resumir(cli, origen, destino, paso, a, b):
+        n = original(cli, origen, destino, paso, a, b)
+        if destino == "zenit_1m" and not hecho:
+            hecho.append(1)
+            _copia_con_otro_activo(cli)
+            catalogo.retroceder_agregacion(pg, INICIO)   # la asociacion termina en medio del ciclo
+        return n
+
+    monkeypatch.setattr(ag, "resumir", resumir)
+    for _ in range(3):
+        _agregar(cliente)
+    assert len(_de(almacen, "zenit_1m")) == 180
+    assert len(_de(almacen, "zenit_1h")) == 3
+
+
+@con_pg
+def test_la_hora_se_escribe_una_sola_vez(entorno, monkeypatch):
+    """Core no compacta: cada reescritura de una hora es un archivo mas."""
+    import zenit.agregacion as ag
+
+    cliente, _, _ = entorno
+    escrituras = []
+    original = ag.resumir
+
+    def resumir(cli, origen, destino, paso, a, b):
+        if destino == "zenit_1h":
+            escrituras.append((a, b))
+        return original(cli, origen, destino, paso, a, b)
+
+    monkeypatch.setattr(ag, "resumir", resumir)
+    for k in range(4):
+        _agregar(cliente, ahora=AHORA + timedelta(minutes=k))
+    assert sum(1 for a, b in escrituras if a <= INICIO < b) == 1     # cuatro ciclos, una escritura

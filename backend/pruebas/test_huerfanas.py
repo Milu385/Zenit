@@ -121,3 +121,76 @@ def test_api_lista_huerfanas(pg, tmp_path):
     cliente = TestClient(crear_app(RepoQuieto(), tmp_path / "x.json", pg_url=PG))
     (h,) = cliente.get("/api/fuentes/huerfanas").json()
     assert h["clave"] == "zenit-nodo-do" and h["metricas"] == 120 and h["resuelve_a"] is None
+
+
+@con_pg
+def test_asociar_saca_la_fuente_huerfana_de_la_lista(pg, influx):
+    from zenit import salud
+
+    _, url = influx
+    ahora = datetime.now(timezone.utc)
+    salud.guardar_pg(pg, {("sin_resolver", "n1", "metricas"): {"proveedor": "aws", "recibidas": 3, "errores": 0,
+                                                              "primera": ahora, "ultima": ahora}})
+    catalogo.sumar_huerfanas(pg, {"n1": {"tipo_clave": "host.name", "proveedor": "aws", "metricas": 3,
+                                         "primera": ahora, "ultima": ahora}})
+    catalogo.agregar_manual(pg, "n1", "activo-aws-nodo-01", "aws")
+    huerfanas.asociar(pg, ClienteInflux(url, "apiv3_prueba"))
+    assert salud.fuentes_pg(pg) == []
+
+
+@con_pg
+def test_el_cargador_completa_el_activo_de_la_verdad_huerfana(pg, tmp_path):
+    import json as _json
+
+    from zenit import verdad
+
+    linea = {"cuerpo": _json.dumps({"evento": "inicio", "uid": "u9", "tipo": "cpu", "nodo": "zenit-nodo-onprem",
+                                    "inicio": "2026-10-09T12:00:00+00:00", "intensidad": "70"}),
+             "zenit_asset_id": "sin_resolver"}
+    (tmp_path / "registros-20261009.jsonl").write_text(_json.dumps(linea) + "\n")
+    verdad.pasada(pg, tmp_path)
+    catalogo.agregar_manual(pg, "zenit-nodo-onprem", "activo-onprem-nodo-01", "proxmox")
+    verdad.pasada(pg, tmp_path)
+    with pg.cursor() as cur:
+        cur.execute("SELECT activo FROM inyecciones WHERE uid = 'u9'")
+        assert cur.fetchone() == ("activo-onprem-nodo-01",)
+
+
+@con_pg
+def test_la_ingesta_pide_rehacer_los_resumenes_si_llegan_puntos_viejos(pg, influx):
+    _, url = influx
+    with pg.cursor() as cur:
+        cur.execute("INSERT INTO agregacion_progreso (nivel, hasta) VALUES ('1m', now()), ('1h', now())")
+    pg.commit()
+    nucleo, srv, stub = armar(CatalogoPG(PG, arrancar=False), url)
+    viejo = AHORA_NS - 20 * 60 * 10**9                    # un agente que vacia su cola: 20 min de atraso
+    try:
+        enviar(stub, otlp.peticion(otlp.gauge("system.cpu.utilization", [otlp.punto(0.4, viejo)])))
+        esperar_reposo(nucleo)
+        nucleo.volcar_salud(PG)
+    finally:
+        srv.stop(0)
+    with pg.cursor() as cur:
+        cur.execute("SELECT nivel, rehacer_desde FROM agregacion_progreso ORDER BY nivel")
+        filas = dict(cur.fetchall())
+    assert filas["1h"] is None                            # la hora la pide el agregador, despues del minuto
+    assert abs(filas["1m"].timestamp() - (viejo // 60_000_000_000) * 60) < 1
+
+
+def test_la_ingesta_cuenta_quien_entra_sin_certificado(influx, tmp_path):
+    import json as _json
+
+    from servidor import Catalogo
+
+    _, url = influx
+    ruta = tmp_path / "c.json"
+    ruta.write_text(_json.dumps({}))
+    nucleo, srv, stub = armar(Catalogo(ruta, cada_s=0), url)
+    nucleo.contar_sin_certificado = True
+    try:
+        enviar(stub, otlp.peticion(otlp.gauge("system.cpu.utilization", [otlp.punto(0.4)]),
+                                   res=otlp.recurso("zenit-nodo-viejo")))
+        esperar_reposo(nucleo)
+    finally:
+        srv.stop(0)
+    assert nucleo.contadores.instantanea()["sin_certificado"] == {"zenit-nodo-viejo": 1}

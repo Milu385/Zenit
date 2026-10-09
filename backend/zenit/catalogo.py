@@ -352,15 +352,19 @@ def marcar_asociada(conexion, clave: str, activo: str) -> None:
         cur.execute("UPDATE huerfanas SET asociada_a = %s, asociada_en = now() WHERE clave = %s", (activo, clave))
         # la verdad de referencia de ese nodo, si llego huerfana
         cur.execute("UPDATE inyecciones SET activo = %s WHERE nodo = %s AND activo IS NULL", (activo, clave))
+        # la fuente huerfana ya no existe como tal: ahora es la del activo
+        cur.execute("DELETE FROM fuentes WHERE activo = 'sin_resolver' AND host_name = %s", (clave,))
     conexion.commit()
 
 
 def retroceder_agregacion(conexion, desde: datetime) -> None:
     """Pide al agregador que rehaga los resumenes desde `desde` en su
-    siguiente ciclo (deploy/postgres/04-agregacion.sql)."""
+    siguiente ciclo (deploy/postgres/04-agregacion.sql). Se pide solo al nivel
+    de minuto: el de hora lo rehace el agregador cuando el de minuto ya tiene
+    los datos nuevos, no antes."""
     with conexion.cursor() as cur:
-        cur.execute("UPDATE agregacion_progreso SET rehacer_desde = LEAST(COALESCE(rehacer_desde, %s), %s)",
-                    (desde, desde))
+        cur.execute("UPDATE agregacion_progreso SET rehacer_desde = LEAST(COALESCE(rehacer_desde, %s), %s) "
+                    "WHERE nivel = '1m'", (desde, desde))
     conexion.commit()
 
 
