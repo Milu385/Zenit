@@ -356,9 +356,11 @@ def marcar_asociada(conexion, clave: str, activo: str) -> None:
 
 
 def retroceder_agregacion(conexion, desde: datetime) -> None:
-    """Obliga al agregador a rehacer los resumenes desde `desde`."""
+    """Pide al agregador que rehaga los resumenes desde `desde` en su
+    siguiente ciclo (deploy/postgres/04-agregacion.sql)."""
     with conexion.cursor() as cur:
-        cur.execute("UPDATE agregacion_progreso SET hasta = LEAST(hasta, %s), actualizado = now()", (desde,))
+        cur.execute("UPDATE agregacion_progreso SET rehacer_desde = LEAST(COALESCE(rehacer_desde, %s), %s)",
+                    (desde, desde))
     conexion.commit()
 
 

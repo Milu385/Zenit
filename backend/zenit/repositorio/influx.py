@@ -20,6 +20,7 @@ motor de consulta que InfluxDB 3 usa por dentro.
 """
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Mapping, Optional
 
@@ -29,7 +30,24 @@ from zenit.influx import ClienteInflux, ErrorInflux
 from .contrato import ErrorConsulta, Resolucion, Respuesta, Serie
 
 INTERVALO = timedelta(seconds=10)
-RANGO_MAXIMO = timedelta(hours=24)
+# Seleccion de nivel (H-019, arquitectura seccion 4): hasta 24 h, crudo; hasta
+# 30 dias, resumen por minuto; mas, resumen por hora. El maximo es lo que
+# retiene zenit_1h.
+UMBRAL_CRUDO = timedelta(hours=24)
+UMBRAL_MINUTO = timedelta(days=30)
+RANGO_MAXIMO = timedelta(days=180)
+# En los resumenes la grafica no necesita un punto por minuto: se agrupa en el
+# paso mas chico de esta lista que deje unos 1500 puntos o menos.
+PASOS_S = (60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400)
+PUNTOS_OBJETIVO = 1500
+# Core falla las consultas que tocan mas de 432 archivos Parquet (--query-file-limit),
+# y cada tabla produce un archivo por cada 10 minutos con datos. Las consultas
+# largas se parten en tramos que no se acercan al limite y corren en paralelo.
+# Los tramos son multiplos de todos los pasos, asi ningun intervalo queda partido.
+TRAMO = {"1m": timedelta(days=2), "1h": timedelta(days=15)}
+BASE_DE = {"1m": "zenit_1m", "1h": "zenit_1h"}
+OBSERVACIONES = {"1m": 6, "1h": 360}     # por fila de resumen, a 10 s
+CAMPOS_RESUMEN = ("value_avg", "value_min", "value_max", "value_count")
 # Un hueco cuenta cuando entre dos puntos pasan mas de dos intervalos. El
 # agente toma muestras cada 10 s pero no alineadas a la epoca, asi que a veces
 # caen dos en un intervalo y ninguna en el siguiente; eso no es un hueco.
@@ -100,18 +118,20 @@ class RepositorioInflux:
         self._ventana = ventana_metricas
         self._cache_s = cache_s
         self._candado = threading.Lock()
-        self._esquema: Optional[dict] = None
-        self._esquema_t = 0.0
+        self._esquemas: dict = {}          # bd -> (momento, {tabla: [columnas]})
         self._metricas_cache: dict = {}
+        self._hilos = ThreadPoolExecutor(max_workers=8, thread_name_prefix="tramos")
 
     # ------------------------------------------------------------ esquema
-    def _columnas(self) -> dict:
-        """{tabla: [columnas]} de las tablas de usuario, con cache corta."""
+    def _columnas(self, bd: Optional[str] = None) -> dict:
+        """{tabla: [columnas]} de las tablas de usuario de una base, con cache corta."""
+        bd = bd or self._bd
         with self._candado:
-            if self._esquema is not None and time.monotonic() - self._esquema_t < self._cache_s:
-                return self._esquema
+            guardado = self._esquemas.get(bd)
+            if guardado is not None and time.monotonic() - guardado[0] < self._cache_s:
+                return guardado[1]
         filas = self._cliente.consultar(
-            self._bd,
+            bd,
             "SELECT table_name, column_name FROM information_schema.columns "
             f"WHERE table_schema NOT IN {_ESQUEMAS_DE_SISTEMA}",
         )
@@ -119,16 +139,19 @@ class RepositorioInflux:
         for f in filas:
             esquema.setdefault(f["table_name"], []).append(f["column_name"])
         with self._candado:
-            self._esquema, self._esquema_t = esquema, time.monotonic()
+            self._esquemas[bd] = (time.monotonic(), esquema)
         return esquema
 
-    def _dimensiones_de(self, metrica: str) -> list:
+    def _dimensiones_de(self, metrica: str, bd: Optional[str] = None) -> list:
         if not es_identificador(metrica):
             raise ErrorConsulta(f"nombre de metrica no valido: {metrica!r}")
-        columnas = self._columnas().get(metrica)
+        columnas = self._columnas(bd).get(metrica)
         if columnas is None:
+            if bd and bd != self._bd and metrica in self._columnas():
+                raise ErrorConsulta(f"todavia no hay resumenes de {metrica!r} para este rango; "
+                                    "el agregador los esta produciendo")
             raise ErrorConsulta(f"no existe la metrica {metrica!r}")
-        fijas = {COLUMNA_TIEMPO, COLUMNA_VALOR, *ETIQUETAS_CANONICAS}
+        fijas = {COLUMNA_TIEMPO, COLUMNA_VALOR, *ETIQUETAS_CANONICAS, *CAMPOS_RESUMEN}
         return sorted(c for c in columnas if c not in fijas and es_identificador(c))
 
     @staticmethod
@@ -137,9 +160,24 @@ class RepositorioInflux:
             raise ErrorConsulta("el rango esta vacio: 'hasta' debe ser posterior a 'desde'")
         if hasta - desde > RANGO_MAXIMO:
             raise ErrorConsulta(
-                "el rango maximo a resolucion de 10 s es de 24 horas; los rangos largos "
-                "se resuelven contra los resumenes (H-018 y H-019)"
-            )
+                f"el rango maximo es de {RANGO_MAXIMO.days} dias, lo que retiene el resumen por hora")
+
+    @staticmethod
+    def nivel_para(desde: datetime, hasta: datetime) -> Resolucion:
+        """El arbol de decision de la arquitectura (seccion 4). Es lo unico que
+        hay que cambiar para mover los umbrales."""
+        rango = hasta - desde
+        if rango <= UMBRAL_CRUDO:
+            return Resolucion.CRUDO
+        if rango <= UMBRAL_MINUTO:
+            return Resolucion.MINUTO
+        return Resolucion.HORA
+
+    @staticmethod
+    def paso_para(nivel: Resolucion, desde: datetime, hasta: datetime) -> int:
+        minimo = 60 if nivel == Resolucion.MINUTO else 3600
+        deseado = (hasta - desde).total_seconds() / PUNTOS_OBJETIVO
+        return next((p for p in PASOS_S if p >= max(minimo, deseado)), PASOS_S[-1])
 
     # ------------------------------------------------------------ contrato
     def metricas_de(self, activo: str) -> list:
@@ -170,7 +208,12 @@ class RepositorioInflux:
 
     def dimensiones(self, activo: str, metrica: str, desde: datetime, hasta: datetime) -> dict:
         self._validar_rango(desde, hasta)
-        dims = self._dimensiones_de(metrica)
+        nivel = self.nivel_para(desde, hasta)
+        bd = self._bd if nivel == Resolucion.CRUDO else BASE_DE[nivel.value]
+        if nivel != Resolucion.CRUDO:
+            # en rangos largos basta el ultimo tramo para conocer los valores
+            desde = max(desde, hasta - TRAMO[nivel.value])
+        dims = self._dimensiones_de(metrica, bd)
         if not dims:
             return {}
         tabla = _citar(metrica)
@@ -181,7 +224,7 @@ class RepositorioInflux:
             for d in dims
         )
         salida: dict = {d: [] for d in dims}
-        for f in self._cliente.consultar(self._bd, sql, {"activo": activo}):
+        for f in self._cliente.consultar(bd, sql, {"activo": activo}):
             salida[f["dimension"]].append(f["valor"])
         return {d: sorted(v)[:100] for d, v in salida.items()}
 
@@ -195,7 +238,12 @@ class RepositorioInflux:
         agrupar: Optional[str] = None,
         filtros: Optional[Mapping[str, str]] = None,
     ) -> Respuesta:
+        """La serie, al nivel que corresponde al rango (H-019). La respuesta
+        tiene siempre la misma forma; `resolucion` dice que nivel se uso."""
         self._validar_rango(desde, hasta)
+        nivel = self.nivel_para(desde, hasta)
+        if nivel != Resolucion.CRUDO:
+            return self._serie_resumen(nivel, activo, metrica, desde, hasta, agrupar, dict(filtros or {}))
         dims = self._dimensiones_de(metrica)
         filtros = dict(filtros or {})
         for clave in [agrupar, *filtros] if agrupar else list(filtros):
@@ -259,6 +307,79 @@ class RepositorioInflux:
             intervalos_esperados=int((limite - desde) / INTERVALO),
             intervalos_vacios=contar_vacios(list(con_datos), desde, limite),
             series_omitidas=max(0, len(claves) - MAXIMO_SERIES),
+            intervalo_s=int(INTERVALO.total_seconds()),
+        )
+
+    def _serie_resumen(self, nivel: Resolucion, activo: str, metrica: str, desde: datetime, hasta: datetime,
+                       agrupar: Optional[str], filtros: dict) -> Respuesta:
+        """La misma serie sobre zenit_1m o zenit_1h.
+
+        El valor de cada intervalo es el promedio ponderado por value_count, que
+        es el promedio exacto de las observaciones crudas que contiene. Un
+        intervalo es incompleto si alguna de sus filas de resumen tiene menos
+        observaciones de las esperadas (6 por minuto, 360 por hora).
+        """
+        bd = BASE_DE[nivel.value]
+        dims = self._dimensiones_de(metrica, bd)
+        for clave in [agrupar, *filtros] if agrupar else list(filtros):
+            if clave not in dims:
+                raise ErrorConsulta(
+                    f"{metrica} no tiene la dimension {clave!r}; tiene: {', '.join(dims) or 'ninguna'}")
+        paso = self.paso_para(nivel, desde, hasta)
+        p = timedelta(seconds=paso)
+        desde = datetime.fromtimestamp(int(desde.timestamp()) // paso * paso, timezone.utc)
+        hasta = datetime.fromtimestamp(-(-int(hasta.timestamp()) // paso) * paso, timezone.utc)
+
+        parametros = {"activo": activo}
+        condiciones = ['"zenit_asset_id" = $activo']
+        for n, (clave, valor) in enumerate(sorted(filtros.items())):
+            parametros[f"f{n}"] = str(valor)
+            condiciones.append(f"{_citar(clave)} = $f{n}")
+        grupo = f", CAST({_citar(agrupar)} AS VARCHAR) AS grupo" if agrupar else ""
+
+        def tramo(a: datetime, b: datetime) -> list:
+            sql = (
+                f"SELECT CAST(date_bin(INTERVAL '{paso} seconds', time, TIMESTAMP '1970-01-01 00:00:00') AS BIGINT) AS t"
+                f'{grupo}, sum("value_avg" * "value_count") / sum("value_count") AS v, min("value_count") AS cmin '
+                f"FROM {_citar(metrica)} WHERE {' AND '.join(condiciones)} "
+                f"AND time >= {_literal_tiempo(a)} AND time < {_literal_tiempo(b)} "
+                f"GROUP BY 1{', 2' if agrupar else ''}"
+            )
+            return self._cliente.consultar(bd, sql, parametros)
+
+        cortes, t = [], desde
+        while t < hasta:
+            cortes.append((t, min(t + TRAMO[nivel.value], hasta)))
+            t += TRAMO[nivel.value]
+        filas = [f for parte in self._hilos.map(lambda c: tramo(*c), cortes) for f in parte]
+
+        por_grupo: dict = {}
+        con_datos, incompletos = set(), set()
+        for f in filas:
+            if f.get("v") is None or f.get("t") is None:
+                continue
+            ms = int(f["t"]) // 1_000_000
+            con_datos.add(ms)
+            if float(f.get("cmin") or 0) < OBSERVACIONES[nivel.value]:
+                incompletos.add(ms)
+            por_grupo.setdefault(f.get("grupo"), []).append([ms, float(f["v"])])
+        for puntos in por_grupo.values():
+            puntos.sort()
+        claves = sorted(por_grupo, key=lambda k: (k is None, str(k)))
+        series = [Serie(etiquetas={agrupar: k} if agrupar else {}, puntos=por_grupo[k])
+                  for k in claves[:MAXIMO_SERIES]]
+        # el ultimo intervalo puede estar a medio resumir: no cuenta como vacio
+        limite = min(hasta, datetime.fromtimestamp(
+            int((datetime.now(timezone.utc) - EN_CAMINO).timestamp()) // paso * paso, timezone.utc))
+        limite = max(limite, desde)
+        esperados = int((limite - desde) / p)
+        inicio_ms, limite_ms = int(desde.timestamp() * 1000), int(limite.timestamp() * 1000)
+        dentro = {ms for ms in con_datos if inicio_ms <= ms < limite_ms}
+        return Respuesta(
+            activo=activo, metrica=metrica, resolucion=nivel, desde=desde, hasta=hasta, agrupar=agrupar,
+            series=series, intervalos_esperados=esperados, intervalos_vacios=max(0, esperados - len(dentro)),
+            series_omitidas=max(0, len(claves) - MAXIMO_SERIES), intervalo_s=paso,
+            intervalos_incompletos=len({ms for ms in incompletos if inicio_ms <= ms < limite_ms}),
         )
 
     # ------------------------------------------------------------ salud (H-021)
@@ -302,7 +423,7 @@ class RepositorioInflux:
 
     def olvidar_esquema(self) -> None:
         with self._candado:
-            self._esquema = None
+            self._esquemas.clear()
             self._metricas_cache.clear()
 
 

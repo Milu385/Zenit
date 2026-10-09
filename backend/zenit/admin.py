@@ -5,6 +5,9 @@ Se corre dentro del contenedor de la API, que ya tiene la red y el token:
     docker compose exec api python -m zenit.admin crear-bases
     docker compose exec api python -m zenit.admin verificar
     docker compose exec api python -m zenit.admin huecos activo-aws-nodo-01 --minutos 30
+    docker compose exec api python -m zenit.admin retencion        (H-020)
+    docker compose exec api python -m zenit.admin espacio          (H-020)
+    docker compose exec api python -m zenit.admin agregacion       (H-018)
 
 Y para el laboratorio de fallos (epica 2):
 
@@ -388,6 +391,99 @@ def orden_catalogo(args) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ epica 1: niveles
+def _duracion(texto: str) -> timedelta:
+    texto = texto.strip().lower()
+    unidades = {"d": "days", "h": "hours"}
+    if not texto or texto[-1] not in unidades:
+        raise ValueError(f"retencion no reconocida: {texto!r}")
+    return timedelta(**{unidades[texto[-1]]: int(texto[:-1])})
+
+
+def _hay_filas(cliente: ClienteInflux, bd: str, tabla: str, desde: datetime, hasta: datetime) -> bool:
+    formato = "%Y-%m-%d %H:%M:%S"
+    filas = cliente.consultar(
+        bd, f'SELECT count(*) AS n FROM "{tabla}" WHERE time >= TIMESTAMP \'{desde.strftime(formato)}\' '
+            f"AND time < TIMESTAMP '{hasta.strftime(formato)}'")
+    return bool(filas and filas[0].get("n"))
+
+
+def retencion(cliente: ClienteInflux, tabla: str = "system_cpu_utilization") -> int:
+    """H-020, criterio 2: la eliminacion es automatica y verificable.
+
+    En Core la retencion se aplica al consultar: lo que paso la ventana deja de
+    aparecer aunque el archivo se borre despues. Se verifica asi, por base:
+    una hora justo fuera de la ventana no devuelve nada, y una hora justo dentro
+    devuelve filas si la plataforma lleva corriendo ese tiempo. No hace falta
+    recorrer toda la base (Core limita los archivos que toca una consulta).
+    """
+    ahora = datetime.now(timezone.utc).replace(microsecond=0)
+    fallas = 0
+    print(f"{'base':14s} {'retencion':10s} {'fuera de la ventana':22s} justo dentro")
+    for bd, texto in (*BASES, BASE_INTERNA):
+        t = tabla if bd != BASE_INTERNA[0] else "zenit_fuente_recibidas"
+        borde = ahora - _duracion(texto)
+        try:
+            fuera = _hay_filas(cliente, bd, t, borde - timedelta(hours=2), borde - timedelta(hours=1))
+            dentro = _hay_filas(cliente, bd, t, borde + timedelta(hours=1), borde + timedelta(hours=2))
+        except ErrorInflux as e:
+            print(f"{bd:14s} {texto:10s} sin datos todavia ({e.estado})")
+            continue
+        fallas += fuera
+        print(f"{bd:14s} {texto:10s} {'FALLA: hay filas' if fuera else 'ninguna fila (OK)':22s} "
+              f"{'hay filas' if dentro else 'sin filas: la plataforma es mas nueva que la ventana'}")
+    return 1 if fallas else 0
+
+
+def espacio(cliente: ClienteInflux) -> int:
+    """H-020, criterio 3: espacio ocupado por nivel, desde system.parquet_files."""
+    total_general = 0
+    for bd, _ in (*BASES, BASE_INTERNA):
+        tablas = _columnas(cliente, bd)
+        total, archivos = 0, 0
+        for tabla in tablas:
+            try:
+                filas = cliente.consultar(
+                    bd, "SELECT count(*) AS archivos, sum(size_bytes) AS bytes FROM system.parquet_files "
+                        f"WHERE table_name = '{tabla}'")
+            except ErrorInflux as e:
+                print(f"{bd}: system.parquet_files no respondio ({e}). Usa scripts/influx/espacio.sh",
+                      file=sys.stderr)
+                return 2
+            if filas:
+                total += int(filas[0].get("bytes") or 0)
+                archivos += int(filas[0].get("archivos") or 0)
+        total_general += total
+        print(f"{bd:14s} {len(tablas):3d} tablas {archivos:7d} archivos {total / 2**20:10.1f} MiB")
+    print(f"{'total':14s} {total_general / 2**20:39.1f} MiB  (lo persistido; lo que esta en memoria aun no cuenta)")
+    return 0
+
+
+def estado_agregacion() -> int:
+    from zenit import catalogo
+
+    with catalogo.conectar(os.environ["PG_URL"]) as c, c.cursor() as cur:
+        cur.execute("SELECT nivel, hasta, rehacer_desde, actualizado FROM agregacion_progreso ORDER BY nivel")
+        filas = cur.fetchall()
+    if not filas:
+        print("el agregador todavia no corrio")
+        return 1
+    ahora = datetime.now(timezone.utc)
+    for nivel, hasta, rehacer, actualizado in filas:
+        print(f"{nivel}: resumido hasta {hasta:%Y-%m-%d %H:%M} UTC, retraso {(ahora - hasta).total_seconds():.0f} s, "
+              f"ultimo ciclo {actualizado:%H:%M:%S}" + (f", pendiente rehacer desde {rehacer:%Y-%m-%d %H:%M}" if rehacer else ""))
+    return 0
+
+
+def reagregar(desde: datetime) -> int:
+    from zenit import catalogo
+
+    with catalogo.conectar(os.environ["PG_URL"]) as c:
+        catalogo.retroceder_agregacion(c, desde)
+    print(f"el agregador rehace desde {desde:%Y-%m-%d %H:%M} UTC en su siguiente ciclo")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m zenit.admin")
     sub = p.add_subparsers(dest="orden", required=True)
@@ -421,7 +517,19 @@ def main(argv=None) -> int:
     ka.add_argument("--region")
     ka.add_argument("--entorno", default="lab")
     sub.add_parser("asociar-huerfanas", help="reasigna la telemetria huerfana cuya clave ya esta en el catalogo")
+    rt = sub.add_parser("retencion", help="verifica que cada base descarta lo que paso su ventana (H-020)")
+    rt.add_argument("--tabla", default="system_cpu_utilization")
+    sub.add_parser("espacio", help="espacio ocupado por cada nivel (H-020)")
+    sub.add_parser("agregacion", help="hasta donde llegan los resumenes y con que retraso (H-018)")
+    ra = sub.add_parser("reagregar", help="rehace los resumenes desde una fecha (datos que llegaron muy tarde)")
+    ra.add_argument("--desde", required=True, type=_fecha_arg)
     args = p.parse_args(argv)
+
+    if args.orden in ("agregacion", "reagregar"):
+        if not os.environ.get("PG_URL"):
+            print("falta PG_URL", file=sys.stderr)
+            return 2
+        return estado_agregacion() if args.orden == "agregacion" else reagregar(args.desde)
 
     if args.orden == "asociar-huerfanas":
         from zenit.huerfanas import asociar_desde_entorno
@@ -462,6 +570,10 @@ def main(argv=None) -> int:
             return crear_bases(cliente)
         if args.orden == "verificar":
             return verificar(cliente, args.horas)
+        if args.orden == "retencion":
+            return retencion(cliente, args.tabla)
+        if args.orden == "espacio":
+            return espacio(cliente)
         return huecos(cliente, args.activo, args.minutos, args.metrica)
     except ErrorInflux as e:
         print(f"error del almacen: {e}", file=sys.stderr)

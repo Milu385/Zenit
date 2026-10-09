@@ -128,7 +128,7 @@ def test_rango_invalido(entorno):
     with pytest.raises(ErrorConsulta):
         repo.serie(ACTIVO, "system_cpu_utilization", FIN, INICIO)
     with pytest.raises(ErrorConsulta):
-        repo.serie(ACTIVO, "system_cpu_utilization", FIN - timedelta(hours=25), FIN)
+        repo.serie(ACTIVO, "system_cpu_utilization", FIN - timedelta(days=181), FIN)
 
 
 # ------------------------------------------------------------------ API

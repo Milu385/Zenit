@@ -160,6 +160,24 @@ services:
       postgres-esquema:
         condition: service_completed_successfully
 
+  # Resumenes por minuto y por hora (H-018), cada 60 s. La primera vez
+  # rellena hacia atras lo que retiene zenit_raw, por tramos.
+  agregador:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "zenit.agregacion", "--cada", "60"]
+    restart: unless-stopped
+    environment:
+      <<: [*influx, *pg]
+      AGREGACION_RELLENO: ${AGREGACION_RELLENO:-${RETENCION_RAW:-30d}}
+    depends_on:
+      influxdb-bases:
+        condition: service_completed_successfully
+      postgres-esquema:
+        condition: service_completed_successfully
+
   api:
     image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
     build:

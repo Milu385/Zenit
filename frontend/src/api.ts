@@ -28,6 +28,8 @@ export type RespuestaSerie = {
   intervalos_esperados: number;
   intervalos_vacios: number;
   series_omitidas: number;
+  intervalo_s?: number; // segundos por punto: 10 en crudo, mas en los resumenes
+  intervalos_incompletos?: number;
   fuente_degradada?: boolean; // RF-VIS-08: mas de 5 min sin recibir metricas del activo
   ultima_recepcion?: string | null;
 };

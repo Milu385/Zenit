@@ -140,11 +140,20 @@ class Almacen:
             filas.append((med, etq, campos, t))
         with self._candado:
             base = self.bases.setdefault(bd, {"retencion": None, "tablas": {}})
+            indices = base.setdefault("indices", {})
             for med, etq, campos, t in filas:
                 for c, (tipo, _) in campos.items():
                     self.tipos[(bd, med, c)] = tipo
                 fila = {"time": t, **etq, **{c: v for c, (_, v) in campos.items()}}
-                base["tablas"].setdefault(med, []).append(fila)
+                # Como el motor: misma serie (etiquetas) y mismo instante es la
+                # misma fila; la escritura nueva reemplaza los campos que trae.
+                clave = (tuple(sorted(etq.items())), t)
+                indice = indices.setdefault(med, {})
+                if clave in indice:
+                    indice[clave].update(fila)
+                else:
+                    indice[clave] = fila
+                    base["tablas"].setdefault(med, []).append(fila)
             self.escrituras += 1
         return 204, ""
 

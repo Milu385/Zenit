@@ -231,7 +231,12 @@ def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path, pg_url: Optio
         agrupar: Optional[str] = Query(None, description="Dimension por la que se separan las lineas, p. ej. state."),
         filtro: list[str] = Query([], description="dimension:valor, repetible. P. ej. cpu:cpu0"),
     ):
-        """Serie de una metrica para un activo y un rango, promediada cada 10 s."""
+        """Serie de una metrica para un activo y un rango.
+
+        Hasta 24 h, promedios de 10 s sobre los datos crudos. Hasta 30 dias, sobre el
+        resumen por minuto; mas de 30 dias, sobre el resumen por hora (H-019). En
+        los resumenes cada punto abarca `intervalo_s` segundos. `resolucion` dice
+        que nivel se uso."""
         inicio, fin = _rango(desde, hasta)
         r = repositorio.serie(activo, metrica, inicio, fin, agrupar=agrupar or None, filtros=_filtros(filtro))
         # RF-VIS-08: la grafica avisa si la fuente esta degradada
@@ -255,6 +260,8 @@ def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path, pg_url: Optio
             "intervalos_esperados": r.intervalos_esperados,
             "intervalos_vacios": r.intervalos_vacios,
             "series_omitidas": r.series_omitidas,
+            "intervalo_s": r.intervalo_s,
+            "intervalos_incompletos": r.intervalos_incompletos,
         }
 
     return app

@@ -12,6 +12,9 @@ const RANGOS = [
   { minutos: 60, texto: "1 h" },
   { minutos: 360, texto: "6 h" },
   { minutos: 1440, texto: "24 h" },
+  // desde aqui la API responde con los resumenes (H-019)
+  { minutos: 7 * 1440, texto: "7 dias" },
+  { minutos: 30 * 1440, texto: "30 dias" },
 ];
 const REFRESCO_MS = 10_000;
 
@@ -176,9 +179,11 @@ export default function App() {
         )}
         <Grafica respuesta={r} refrescando={refrescando} />
         <p className="pie">
-          Resolucion {r.resolucion} · {r.intervalos_esperados - r.intervalos_vacios} de {r.intervalos_esperados}{" "}
-          intervalos con datos
+          Resolucion {r.resolucion}
+          {r.intervalo_s && r.intervalo_s > 10 ? ` (un punto cada ${r.intervalo_s / 60} min)` : ""} ·{" "}
+          {r.intervalos_esperados - r.intervalos_vacios} de {r.intervalos_esperados} intervalos con datos
           {r.intervalos_vacios > 0 && ` · ${r.intervalos_vacios} vacios`}
+          {(r.intervalos_incompletos ?? 0) > 0 && ` · ${r.intervalos_incompletos} incompletos`}
           {r.series_omitidas > 0 && ` · ${r.series_omitidas} series no mostradas (maximo 8)`}
         </p>
         {verTabla && <TablaSerie respuesta={r} />}

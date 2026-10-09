@@ -97,9 +97,9 @@ def test_retroceder_agregacion_al_asociar(pg, influx):
     catalogo.agregar_manual(pg, "n1", "activo-aws-nodo-01", "aws")
     huerfanas.asociar(pg, ClienteInflux(url, "apiv3_prueba"))
     with pg.cursor() as cur:
-        cur.execute("SELECT min(hasta) FROM agregacion_progreso")
-        (hasta,) = cur.fetchone()
-    assert hasta < datetime(2026, 10, 8, tzinfo=timezone.utc)
+        cur.execute("SELECT min(rehacer_desde) FROM agregacion_progreso")
+        (rehacer,) = cur.fetchone()
+    assert rehacer < datetime(2026, 10, 8, tzinfo=timezone.utc)
 
 
 @con_pg
