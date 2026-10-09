@@ -107,7 +107,7 @@ def pg():
     conexion = psycopg.connect(PG)
     with conexion.cursor() as cur:
         cur.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
-        cur.execute(ESQUEMA.read_text())
+        [cur.execute(a.read_text()) for a in sorted(ESQUEMA.parent.glob("*.sql"))]
     conexion.commit()
     yield conexion
     conexion.close()

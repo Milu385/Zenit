@@ -45,7 +45,23 @@ def _filtros(crudos: list) -> dict:
     return salida
 
 
-def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path) -> FastAPI:
+def _iso(v):
+    return v.isoformat() if hasattr(v, "isoformat") else v
+
+
+def _activo_publico(a: dict) -> dict:
+    """La forma del contrato (seccion 3, Activos). El estado de salud lo
+    completa H-021; aqui solo se distingue retirado."""
+    return {
+        "id": a["id"], "nombre": a["nombre"], "proveedor": a["proveedor"], "region": a["region"],
+        "entorno": a["entorno"], "estado": "retirado" if a["estado"] == "retirado" else "sin_datos",
+        "origen": a["origen"], "visto": _iso(a["visto"]), "retirado_en": _iso(a["retirado_en"]),
+        "claves": [c for c in a["claves"] if ":" not in c],                 # host.name: lo que llega en la telemetria
+        "ids_nativos": [c for c in a["claves"] if ":" in c],                 # proveedor:tipo/id
+    }
+
+
+def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path, pg_url: Optional[str] = None) -> FastAPI:
     app = FastAPI(
         title="Zenit",
         version="0.2.0",
@@ -66,9 +82,20 @@ def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path) -> FastAPI:
     def salud():
         return {"estado": "ok", "almacen": repositorio.disponible()}
 
+    def _catalogo_pg() -> list:
+        from zenit import catalogo
+
+        try:
+            with catalogo.conectar(pg_url) as c:
+                return catalogo.listar_activos(c)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(503, detail=f"el catalogo no respondio: {type(e).__name__}")
+
     @app.get("/api/activos", tags=["activos"])
     def activos():
-        """Activos del catalogo, con las claves nativas por las que se resuelven."""
+        """Activos del catalogo (H-009), con las claves por las que se resuelven."""
+        if pg_url:
+            return [_activo_publico(a) for a in _catalogo_pg()]
         try:
             datos = json.loads(Path(ruta_catalogo).read_text())
         except FileNotFoundError:
@@ -79,6 +106,29 @@ def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path) -> FastAPI:
         for clave, activo in datos.items():
             agrupados.setdefault(str(activo), []).append(str(clave))
         return [{"id": a, "claves": sorted(c)} for a, c in sorted(agrupados.items())]
+
+    @app.get("/api/activos/{activo}", tags=["activos"])
+    def activo_por_id(activo: str):
+        if not pg_url:
+            raise HTTPException(404, detail="sin catalogo en PostgreSQL")
+        for a in _catalogo_pg():
+            if a["id"] == activo:
+                return _activo_publico(a)
+        raise HTTPException(404, detail=f"no existe el activo {activo!r}")
+
+    @app.get("/api/catalogo/descubrimientos", tags=["activos"])
+    def descubrimientos():
+        """Ultima ejecucion del descubrimiento por proveedor y las mas recientes (H-009, criterio 5)."""
+        if not pg_url:
+            return {"ultimas": [], "recientes": []}
+        from zenit import catalogo
+
+        try:
+            with catalogo.conectar(pg_url) as c:
+                datos = catalogo.ejecuciones(c)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(503, detail=f"el catalogo no respondio: {type(e).__name__}")
+        return {k: [{c: _iso(v) for c, v in f.items()} for f in filas] for k, filas in datos.items()}
 
     @app.get("/api/activos/{activo}/metricas", tags=["series"])
     def metricas(activo: str):
@@ -128,6 +178,7 @@ def _desde_entorno() -> FastAPI:
     return crear_app(
         RepositorioInflux(cliente, os.environ.get("INFLUX_BD", "zenit_raw")),
         Path(os.environ.get("RUTA_CATALOGO", "/etc/zenit/catalogo/catalogo.json")),
+        pg_url=os.environ.get("PG_URL") or None,
     )
 
 

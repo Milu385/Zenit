@@ -11,7 +11,13 @@ Y para el laboratorio de fallos (epica 2):
     python -m zenit.admin cargar-verdad --cada 60          (lo corre el servicio cargador)
     python -m zenit.admin exportar --desde 2026-10-05T00:00Z --hasta 2026-10-07T00:00Z --salida /exportaciones/x
 
-crear-bases es idempotente: si la base existe, solo ajusta su retencion.
+Y para el catalogo de activos (epica 1):
+
+    python -m zenit.admin migrar-pg                 (lo corre el servicio postgres-esquema)
+    python -m zenit.admin catalogo listar
+    python -m zenit.admin catalogo admitir zenit-nodo-onprem activo-onprem-nodo-01 --proveedor proxmox
+
+crear-bases y migrar-pg son idempotentes: repetirlos no cambia nada.
 """
 import argparse
 import csv
@@ -277,6 +283,13 @@ def exportar(cliente: ClienteInflux, desde: datetime, hasta: datetime, salida: P
             print(f"  {tabla:45s} {total:8d} filas")
 
     activos = [activo] if activo else []
+    if not activos and conexion is not None:
+        from zenit import catalogo
+
+        try:
+            activos = [a["id"] for a in catalogo.listar_activos(conexion)]
+        except Exception:  # noqa: BLE001 - plataforma sin el esquema de la epica 1
+            conexion.rollback()
     if not activos and ruta_catalogo and Path(ruta_catalogo).exists():
         activos = sorted(set(json.loads(Path(ruta_catalogo).read_text()).values()))
     with open(salida / "huecos.csv", "w", newline="") as f:
@@ -311,6 +324,67 @@ def exportar(cliente: ClienteInflux, desde: datetime, hasta: datetime, salida: P
     return 0
 
 
+# ------------------------------------------------------------------ epica 1: catalogo
+def migrar_pg(carpeta: Path, ruta_catalogo: str = "") -> int:
+    """Aplica deploy/postgres/*.sql en orden, en una plataforma que ya existia.
+
+    PostgreSQL solo ejecuta esa carpeta con el volumen vacio; despues, cada
+    archivo nuevo hay que aplicarlo. Todos estan escritos con IF NOT EXISTS,
+    asi que se pueden repetir. Al final importa catalogo.json (lo que se
+    admitia a mano en las epicas 0 y 2), conservando los ids.
+    """
+    from zenit import catalogo
+
+    url = os.environ.get("PG_URL")
+    if not url:
+        print("falta PG_URL", file=sys.stderr)
+        return 2
+    catalogo.esperar_pg(url)
+    archivos = sorted(Path(carpeta).glob("*.sql"))
+    if not archivos:
+        print(f"no hay archivos .sql en {carpeta}", file=sys.stderr)
+        return 2
+    with catalogo.conectar(url) as c:
+        for a in archivos:
+            with c.cursor() as cur:
+                cur.execute(a.read_text())
+            c.commit()
+            print(f"aplicado  {a.name}")
+        if ruta_catalogo:
+            n = catalogo.importar_archivo(c, Path(ruta_catalogo))
+            print(f"catalogo.json: {n} cambios" if n else "catalogo.json: nada nuevo")
+    return 0
+
+
+def orden_catalogo(args) -> int:
+    from zenit import catalogo
+
+    url = os.environ.get("PG_URL")
+    if not url:
+        print("falta PG_URL", file=sys.stderr)
+        return 2
+    with catalogo.conectar(url) as c:
+        if args.accion == "admitir":
+            try:
+                cambio = catalogo.agregar_manual(c, args.clave, args.activo, args.proveedor,
+                                                 region=args.region, entorno=args.entorno)
+            except ValueError as e:
+                print(e, file=sys.stderr)
+                return 1
+            print(f"{args.clave} -> {args.activo}" + ("" if cambio else " (ya estaba)"))
+            print("la ingesta lo toma en menos de 30 s")
+            return 0
+        for a in catalogo.listar_activos(c):
+            visto = a["visto"].strftime("%Y-%m-%d %H:%M") if a["visto"] else "nunca"
+            print(f"{a['id']:28s} {a['proveedor']:13s} {a['estado']:9s} {a['origen']:15s} "
+                  f"visto {visto:16s} {', '.join(a['claves'])}")
+        for e in catalogo.ejecuciones(c)["ultimas"]:
+            print(f"ultimo descubrimiento {e['proveedor']}: {e['estado']} {e['inicio']:%Y-%m-%d %H:%M} "
+                  f"vistos={e['vistos']} nuevos={e['nuevos']} retirados={e['retirados']}"
+                  + (f" error={e['error']}" if e["error"] else ""))
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m zenit.admin")
     sub = p.add_subparsers(dest="orden", required=True)
@@ -331,7 +405,24 @@ def main(argv=None) -> int:
     e.add_argument("--hasta", required=True, type=_fecha_arg)
     e.add_argument("--salida", required=True, type=Path)
     e.add_argument("--activo", default="")
+    m = sub.add_parser("migrar-pg", help="aplica deploy/postgres/*.sql e importa catalogo.json")
+    m.add_argument("--carpeta", default=os.environ.get("RUTA_ESQUEMA_PG", "/etc/zenit/postgres"))
+    m.add_argument("--catalogo", default=os.environ.get("RUTA_CATALOGO", ""))
+    k = sub.add_parser("catalogo", help="activos del catalogo y admision manual")
+    ks = k.add_subparsers(dest="accion", required=True)
+    ks.add_parser("listar")
+    ka = ks.add_parser("admitir", help="asocia una clave host.name (ZENIT_NODO) a un activo")
+    ka.add_argument("clave")
+    ka.add_argument("activo")
+    ka.add_argument("--proveedor", default="desconocido")
+    ka.add_argument("--region")
+    ka.add_argument("--entorno", default="lab")
     args = p.parse_args(argv)
+
+    if args.orden == "migrar-pg":
+        return migrar_pg(Path(args.carpeta), args.catalogo)
+    if args.orden == "catalogo":
+        return orden_catalogo(args)
 
     if args.orden == "cargar-verdad":
         if args.crudo and args.cada:

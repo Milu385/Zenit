@@ -53,7 +53,7 @@ services:
   # Una sola vez por arranque: crea las tres bases con su retencion. Es
   # idempotente, asi que repetirlo no hace dano.
   influxdb-bases:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.3.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
@@ -69,7 +69,7 @@ services:
         condition: service_healthy
 
   ingesta:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-ingesta:${VERSION_INGESTA:-0.3.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-ingesta:${VERSION_INGESTA:-0.4.0}
     build:
       context: ../backend              # incluye el paquete compartido zenit/
       dockerfile: ingesta/Dockerfile
@@ -106,8 +106,58 @@ services:
       retries: 5
       start_period: 15s
 
+  # Una sola vez por arranque: aplica deploy/postgres/*.sql (lo nuevo de cada
+  # epica, en una base que ya existia) e importa catalogo.json conservando los
+  # ids. Idempotente, como influxdb-bases.
+  postgres-esquema:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "zenit.admin", "migrar-pg"]
+    restart: "no"
+    environment:
+      <<: *pg
+      RUTA_ESQUEMA_PG: /etc/zenit/postgres
+      RUTA_CATALOGO: /etc/zenit/catalogo/catalogo.json
+    volumes:
+      - ./postgres:/etc/zenit/postgres:ro
+      - ./catalogo:/etc/zenit/catalogo:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Descubrimiento de activos cada 15 minutos (H-009). Cada proveedor se
+  # activa solo si su credencial de solo lectura esta en deploy/.env; los
+  # archivos (credenciales de la sesion de AWS, CA del Proxmox) van en
+  # deploy/secretos/descubrimiento/, que no se versiona.
+  descubridor:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "zenit.descubrimiento", "--cada", "${DESCUBRIMIENTO_CADA:-900}"]
+    restart: unless-stopped
+    environment:
+      <<: [*influx, *pg]
+      DO_TOKEN: ${DO_TOKEN:-}
+      DO_ETIQUETA: ${DO_ETIQUETA:-zenit-nodo}
+      PROXMOX_URL: ${PROXMOX_URL:-}
+      PROXMOX_TOKEN: ${PROXMOX_TOKEN:-}
+      PROXMOX_CA: ${PROXMOX_CA:-}
+      PROXMOX_NOMBRE_TLS: ${PROXMOX_NOMBRE_TLS:-}
+      PROXMOX_ETIQUETA: ${PROXMOX_ETIQUETA:-zenit-nodo}
+      DESCUBRIR_AWS: ${DESCUBRIR_AWS:-0}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_SHARED_CREDENTIALS_FILE: /run/zenit/descubrimiento/aws-credenciales
+    volumes:
+      - ./secretos/descubrimiento:/run/zenit/descubrimiento:ro
+    depends_on:
+      postgres-esquema:
+        condition: service_completed_successfully
+
   api:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.3.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
@@ -121,8 +171,8 @@ services:
     depends_on:
       influxdb-bases:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
+      postgres-esquema:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/salud')"]
@@ -155,7 +205,7 @@ services:
   # Verdad de referencia del laboratorio: lee los registros que la ingesta
   # guardo y los deja en la tabla inyecciones, una vez por minuto (H-024).
   cargador:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.3.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
