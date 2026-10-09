@@ -1,6 +1,6 @@
 # Esquema de medición en InfluxDB 3
 
-Versión 0.2.0 · 2026-10-03 · H-005, criterio 3 · RF-ALM-01
+Versión 0.3.0 · 2026-10-09 · H-005, criterio 3 · H-018 · H-020 · H-021 · RF-ALM-01 a 04
 
 Este documento describe el esquema **tal como quedó implementado**. El diseño original, con su justificación completa, está en el documento de esquema de medición del proyecto (versión 1, 11 de septiembre de 2026); al final se listan las diferencias entre ese diseño y lo implementado.
 
@@ -23,13 +23,18 @@ La regla para decidir: si responde "de dónde viene", es etiqueta; si responde "
 
 Una base por nivel de resolución, porque la retención se configura por base:
 
-| Base | Contenido | Retención | Estado |
+| Base | Contenido | Retención | Quién escribe |
 |---|---|---|---|
-| `zenit_raw` | Observaciones a 10 s | 30 días mientras dure la campaña del laboratorio (7 en el diseño) | En uso |
-| `zenit_1m` | Resúmenes por minuto | 30 días | Creada, vacía hasta H-018 |
-| `zenit_1h` | Resúmenes por hora | 180 días | Creada, vacía hasta H-018 |
+| `zenit_raw` | Observaciones a 10 s | 30 días mientras dure la campaña del laboratorio (7 en el diseño) | La ingesta |
+| `zenit_1m` | Resúmenes por minuto | 30 días | El agregador (H-018) |
+| `zenit_1h` | Resúmenes por hora | 180 días | El agregador (H-018) |
+| `zenit_interno` | Métricas de la propia plataforma | 7 días | La ingesta y el agregador (H-021) |
 
-Las crea `python -m zenit.admin crear-bases`, que también corre como servicio de un solo uso (`influxdb-bases`) en cada arranque. Si una base ya existe, le ajusta la retención: desde la versión 3.4, InfluxDB 3 Core permite cambiarla después de crear la base. Las retenciones se cambian con `RETENCION_RAW`, `RETENCION_1M` y `RETENCION_1H` en `deploy/.env`.
+Las crea `python -m zenit.admin crear-bases`, que también corre como servicio de un solo uso (`influxdb-bases`) en cada arranque. Si una base ya existe, le ajusta la retención: desde la versión 3.4, InfluxDB 3 Core permite cambiarla después de crear la base. Las retenciones se cambian con `RETENCION_RAW`, `RETENCION_1M`, `RETENCION_1H` y `RETENCION_INTERNA` en `deploy/.env`.
+
+Core admite cinco bases. Con `zenit_interno` quedan cuatro en uso y **una libre**.
+
+**Cómo se verifica la retención (H-020).** En Core la retención se aplica al consultar: lo que pasó la ventana deja de aparecer aunque el archivo se borre después. `python -m zenit.admin retencion` consulta, en cada base, una hora justo fuera de la ventana (no debe haber nada) y una justo dentro. `python -m zenit.admin espacio` dice cuántos archivos y cuántos MiB ocupa cada base, desde `system.parquet_files`; si esa tabla no responde, `scripts/influx/espacio.sh` mide los directorios.
 
 ## 3. Nombres
 
@@ -49,14 +54,16 @@ Las seis van en **toda** fila de **toda** tabla y nunca quedan vacías. Si el ag
 
 | Etiqueta | De dónde sale | Ejemplo |
 |---|---|---|
-| `zenit_asset_id` | Del catálogo (`deploy/catalogo/catalogo.json`), por la identidad del nodo | `activo-aws-nodo-01` |
+| `zenit_asset_id` | Del catálogo en PostgreSQL, por la identidad del nodo | `activo-aws-nodo-01` |
 | `host_name` | `host.name` del recurso | `zenit-nodo-aws` |
 | `service_name` | `service.name`; si no viene, `SERVICIO_POR_DEFECTO` | `host` para las métricas del anfitrión |
 | `cloud_provider` | `cloud.provider` | `aws`, `proxmox` |
 | `cloud_region` | `cloud.region` | `us-east-1`, `local` |
 | `deployment_environment` | `deployment.environment` | `lab` |
 
-**Huérfanas.** Un punto cuyo nodo no está en el catálogo se guarda igual, con `zenit_asset_id = sin_resolver`, y su origen queda en `host_name`. Ninguna señal se descarta: el contador `huerfanas` de `/metricas` las cuenta.
+**Huérfanas.** Un punto cuyo nodo no está en el catálogo se guarda igual, con `zenit_asset_id = sin_resolver`, y su origen queda en `host_name`. Ninguna señal se descarta: el contador `huerfanas` de `/metricas` las cuenta y la tabla `huerfanas` de PostgreSQL las lista por origen (H-011). Cuando el activo entra al catálogo, sus filas se reescriben con el identificador correcto; las de `sin_resolver` quedan, porque Core no borra filas, y la vista de huérfanas las muestra como asociadas.
+
+**De dónde sale `zenit_asset_id` (H-010).** Del catálogo en PostgreSQL (`activos` y `claves_nativas`, `deploy/postgres/02-catalogo.sql`), que mantiene el descubrimiento. La ingesta lo carga cada 30 s y resuelve en memoria. `deploy/catalogo/catalogo.json` queda como respaldo si PostgreSQL nunca respondió, y su contenido se importa al catálogo al arrancar.
 
 ## 5. Dimensiones propias de cada métrica
 
@@ -79,7 +86,14 @@ Una dimensión que no viene en un punto se omite y queda nula en esa fila. `veri
 | Base | Campos |
 |---|---|
 | `zenit_raw` | `value` (decimal) |
-| `zenit_1m`, `zenit_1h` | `value_avg`, `value_min`, `value_max`, `value_count`, cuando exista H-018 |
+| `zenit_1m`, `zenit_1h` | `value_avg`, `value_min`, `value_max`, `value_count`, todos decimales |
+| `zenit_interno` | `value` |
+
+**Los resúmenes (H-018).** Cada fila de `zenit_1m` resume un minuto de una serie de `zenit_raw` (la misma tabla y las mismas etiquetas, con la marca de tiempo del inicio del minuto). `zenit_1h` resume las filas de `zenit_1m`: el promedio se pondera por `value_count`, así que es el promedio exacto de las observaciones crudas. A 10 s, un minuto completo tiene `value_count = 6` y una hora, 360. **Un intervalo con menos observaciones tuvo pérdida y queda con su cuenta real**: no se rellena ni se descarta, y la API lo informa en `intervalos_incompletos`.
+
+El agregador reescribe cada resumen con la misma serie y el mismo instante, así que repetirlo lo reemplaza y no lo duplica. Escribe cada minuto una vez (y rehace los dos últimos) y cada hora una sola vez, porque Core no compacta y cada reescritura es un archivo más que las consultas largas tienen que abrir.
+
+**Las tablas de `zenit_interno`.** `zenit_fuente_recibidas` y `zenit_fuente_errores` (etiquetas `zenit_asset_id`, `host_name`, `senal`, `cloud_provider`; una fila cada 10 s por fuente con lo recibido en ese lapso), `zenit_ingesta_*` (memoria, líneas pendientes, contrapresión y rechazos de la ingesta, etiqueta `servicio`) y `zenit_agregacion_*` (retraso y duración de cada ciclo, etiqueta `nivel`). No llevan las seis etiquetas canónicas porque no describen a un activo observado; `verificar` no revisa esta base.
 
 Qué valor se guarda según el tipo de métrica de OpenTelemetry:
 
@@ -121,7 +135,7 @@ Comprueba, tabla por tabla:
 - que ninguna tabla pasa del 80 % del límite de columnas, 500 por defecto (falla si pasa);
 - cuántas filas hay en las últimas 24 horas.
 
-Que los tres niveles compartan etiquetas se comprueba sobre `zenit_raw` y se repite al cerrar H-018, cuando `zenit_1m` y `zenit_1h` tengan tablas.
+Desde H-018, `verificar` revisa también `zenit_1m` y `zenit_1h`: las mismas seis etiquetas canónicas, sin nulos, en los tres niveles.
 
 Resultado del 3 de octubre de 2026: 26 tablas en `zenit_raw`, todas en OK, entre 8 y 13 columnas cada una. Ver `docs/verificacion-epica-0.md`.
 
@@ -133,4 +147,5 @@ Resultado del 3 de octubre de 2026: 26 tablas en `zenit_raw`, todas en OK, entre
 | Retención de `zenit_raw`: 7 días | 30 días durante la campaña del laboratorio | La evaluación necesita las semanas completas aunque falle una exportación diaria |
 | La retención no se puede cambiar después de crear la base | Se puede cambiar (InfluxDB 3.4 o posterior) | Comprobado en el código fuente del motor |
 | Una dimensión opcional se escribe como `desconocido` | Solo las canónicas usan `desconocido`; las dimensiones propias pueden quedar nulas | Rellenarlas obligaría a conocer de antemano las dimensiones de cada métrica |
-| Métricas internas de Zenit en una base propia | Por ahora en `/metricas` de la ingesta, en JSON | Suficiente para la épica 0; se revisa con H-021 |
+| Métricas internas de Zenit en una base propia | `zenit_interno` desde H-021; `/metricas` de la ingesta sigue para la verificación rápida | Como en el diseño |
+| Una consulta larga sobre los resúmenes | Partida en tramos de 1 día (`zenit_1m`) y 10 días (`zenit_1h`), en paralelo | Core falla las consultas que abren más de 432 archivos (`--query-file-limit`) |

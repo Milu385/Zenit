@@ -223,6 +223,10 @@ services:
       AWS_SHARED_CREDENTIALS_FILE: /run/zenit/descubrimiento/aws-credenciales
     volumes:
       - ./secretos/descubrimiento:/run/zenit/descubrimiento:ro
+    # Si la API del Proxmox llega por un tunel SSH al anfitrion
+    # (docs/proveedores.md, seccion 3): https://host.docker.internal:18006
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres-esquema:
         condition: service_completed_successfully
