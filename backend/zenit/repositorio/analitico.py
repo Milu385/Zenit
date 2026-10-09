@@ -167,6 +167,20 @@ class RepositorioAnalitico:
         )
         return {k: int(v) for k, v in r.items()}
 
+    def contar_registros(self, desde: datetime, hasta: datetime, servicio: Optional[str] = None,
+                         activo: Optional[str] = None) -> int:
+        """Para las mediciones de H-016: cuantos registros hay en la ventana."""
+        condiciones = [_ventana("momento")]
+        params = {"desde": _ns(desde), "hasta": _ns(hasta)}
+        if servicio:
+            condiciones.append("service_name = {servicio:String}")
+            params["servicio"] = servicio
+        if activo:
+            condiciones.append("zenit_asset_id = {activo:String}")
+            params["activo"] = activo
+        (f,) = self._ch.consultar(f"SELECT count() AS n FROM registros WHERE {' AND '.join(condiciones)}", params)
+        return int(f["n"])
+
     # ------------------------------------------------------------ mantenimiento (H-011)
     def reasignar_sin_resolver(self, host_name: str, activo: str) -> int:
         """Pasa las filas huerfanas de un origen al activo que ahora lo resuelve.

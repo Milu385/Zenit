@@ -509,6 +509,130 @@ def reagregar(desde: datetime) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ epica 1: mediciones
+def _percentil(valores: list, p: float) -> float:
+    orden = sorted(valores)
+    if not orden:
+        return float("nan")
+    k = (len(orden) - 1) * p
+    i = int(k)
+    return orden[i] + (orden[min(i + 1, len(orden) - 1)] - orden[i]) * (k - i)
+
+
+def medir_latencia(api: str, activo: str, minutos: int, salida: Optional[Path]) -> int:
+    """P-REN-01 (plan de pruebas 6.2), del lado de la plataforma.
+
+    La sonda del nodo manda cada 10 s un punto de zenit.sonda cuyo valor es su
+    instante de emision. Aqui se pregunta a la API cada segundo por los
+    ultimos minutos, y la primera vez que aparece un valor se anota cuanto
+    tardo: ahora menos el valor. Los relojes del nodo y de la plataforma estan
+    sincronizados por NTP (userdata); un desfase de reloj se suma a la medida.
+    """
+    import httpx
+
+    vistos: dict = {}
+    fin = time.monotonic() + minutos * 60
+    errores = 0
+    # Lo emitido antes de la primera respuesta buena no cuenta: lo que se mide
+    # es cuanto tarda un punto nuevo, no cuanto llevaba la sonda corriendo (y
+    # una metrica recien creada tarda hasta 30 s en entrar al cache de esquema).
+    desde_valido = None
+    with httpx.Client(base_url=api.rstrip("/"), timeout=5.0) as http:
+        while time.monotonic() < fin:
+            ciclo = time.monotonic()
+            ahora = datetime.now(timezone.utc)
+            try:
+                r = http.get(f"/api/activos/{activo}/series/zenit_sonda",
+                             params={"desde": (ahora - timedelta(minutes=3)).isoformat(), "hasta": ahora.isoformat()})
+                visto_en = time.time()
+                if r.status_code == 200:
+                    desde_valido = desde_valido or visto_en
+                    for serie in r.json()["series"]:
+                        for _, valor in serie["puntos"]:
+                            if valor not in vistos:
+                                vistos[valor] = visto_en - valor
+                elif r.status_code != 422:      # 422: todavia no existe la metrica
+                    errores += 1
+            except httpx.HTTPError:
+                errores += 1
+            time.sleep(max(0.0, 1.0 - (time.monotonic() - ciclo)))
+    latencias = [l for v, l in sorted(vistos.items()) if desde_valido and v >= desde_valido]
+    if salida:
+        with open(salida, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["emitido_utc", "latencia_s"])
+            for v, l in sorted(vistos.items()):
+                w.writerow([datetime.fromtimestamp(v, timezone.utc).isoformat(), round(l, 3)])
+    if not latencias:
+        print("no se vio ningun punto nuevo de zenit_sonda: esta corriendo la sonda en el nodo?", file=sys.stderr)
+        return 1
+    p95 = _percentil(latencias, 0.95)
+    print(f"P-REN-01 {activo}: {len(latencias)} puntos en {minutos} min, errores de consulta {errores}")
+    print(f"  latencia p50 {_percentil(latencias, 0.5):.1f} s · p95 {p95:.1f} s · maxima {max(latencias):.1f} s")
+    print(f"  RNF-REN-01 (p95 <= 30 s): {'CUMPLE' if p95 <= 30 else 'NO CUMPLE'}")
+    return 0 if p95 <= 30 else 1
+
+
+def contar(cliente: ClienteInflux, tabla: str, activo: str, desde: datetime, hasta: datetime,
+           esperados: Optional[int]) -> int:
+    """P-REN-02 (plan de pruebas 6.3): filas almacenadas de una metrica en la ventana."""
+    if not es_identificador(tabla):
+        print(f"nombre de tabla no valido: {tabla!r}", file=sys.stderr)
+        return 2
+    total = 0
+    formato = "%Y-%m-%d %H:%M:%S"
+    for d, h in _dias(desde, hasta):
+        (f,) = cliente.consultar(
+            "zenit_raw", f'SELECT count(*) AS n FROM "{tabla}" WHERE "zenit_asset_id" = $activo '
+                         f"AND time >= TIMESTAMP '{d.strftime(formato)}' AND time < TIMESTAMP '{h.strftime(formato)}'",
+            {"activo": activo}) or [{"n": 0}]
+        total += int(f.get("n") or 0)
+    print(f"{tabla} de {activo} entre {desde:%H:%M:%S} y {hasta:%H:%M:%S} UTC: {total} filas")
+    if esperados:
+        completitud = total / esperados
+        print(f"  completitud {completitud:.4%} de {esperados} enviados; RNF-REN-02 (>= 99,9 %): "
+              f"{'CUMPLE' if completitud >= 0.999 else 'NO CUMPLE'}")
+        return 0 if completitud >= 0.999 else 1
+    return 0
+
+
+def contar_registros(desde: datetime, hasta: datetime, servicio: str, esperados: Optional[int]) -> int:
+    from zenit.repositorio.analitico import RepositorioAnalitico
+
+    n = RepositorioAnalitico.desde_entorno().contar_registros(desde, hasta, servicio=servicio)
+    print(f"registros de {servicio} entre {desde:%H:%M:%S} y {hasta:%H:%M:%S} UTC: {n}")
+    if esperados:
+        print(f"  {n / esperados:.4%} de {esperados} enviados; H-016 (sin perdida): "
+              f"{'CUMPLE' if n >= esperados else 'NO CUMPLE'}")
+        return 0 if n >= esperados else 1
+    return 0
+
+
+def informe_ingesta(cliente: ClienteInflux, desde: datetime, hasta: datetime) -> int:
+    """H-031: memoria, cola y contrapresion de la ingesta en una ventana, desde zenit_interno."""
+    formato = "%Y-%m-%d %H:%M:%S"
+    rango = f"time >= TIMESTAMP '{desde.strftime(formato)}' AND time < TIMESTAMP '{hasta.strftime(formato)}'"
+    print(f"ingesta entre {desde:%Y-%m-%d %H:%M} y {hasta:%H:%M} UTC")
+    for nombre, como in (("memoria_bytes", "max"), ("lineas_pendientes", "max"), ("filas_pendientes_analitico", "max"),
+                         ("contrapresion", "aumento"), ("rechazadas_por_almacen", "aumento"),
+                         ("peticiones_rechazadas", "aumento")):
+        try:
+            (f,) = cliente.consultar(BASE_INTERNA[0], f'SELECT max("value") AS mx, min("value") AS mn '
+                                                      f'FROM "zenit_ingesta_{nombre}" WHERE {rango}') or [{}]
+        except ErrorInflux:
+            f = {}
+        if f.get("mx") is None:
+            print(f"  {nombre:28s} sin datos")
+            continue
+        valor = f["mx"] if como == "max" else f["mx"] - f["mn"]
+        texto = f"{valor / 2**20:.0f} MiB" if nombre == "memoria_bytes" else f"{valor:.0f}"
+        print(f"  {nombre:28s} {como:8s} {texto}")
+    limite = os.environ.get("LIMITE_MEMORIA_INGESTA")
+    if limite:
+        print(f"  limite declarado: {limite}")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m zenit.admin")
     sub = p.add_subparsers(dest="orden", required=True)
@@ -550,7 +674,31 @@ def main(argv=None) -> int:
     sub.add_parser("agregacion", help="hasta donde llegan los resumenes y con que retraso (H-018)")
     ra = sub.add_parser("reagregar", help="rehace los resumenes desde una fecha (datos que llegaron muy tarde)")
     ra.add_argument("--desde", required=True, type=_fecha_arg)
+    ml = sub.add_parser("medir-latencia", help="P-REN-01: latencia de extremo a extremo con la sonda")
+    ml.add_argument("activo")
+    ml.add_argument("--minutos", type=int, default=60)
+    ml.add_argument("--api", default="http://localhost:8000")
+    ml.add_argument("--salida", type=Path)
+    co = sub.add_parser("contar", help="P-REN-02: filas de una metrica en una ventana")
+    co.add_argument("activo")
+    co.add_argument("--tabla", default="zenit_sonda_completitud")
+    co.add_argument("--desde", required=True, type=_fecha_arg)
+    co.add_argument("--hasta", required=True, type=_fecha_arg)
+    co.add_argument("--esperados", type=int)
+    cr = sub.add_parser("contar-registros", help="H-016: registros de un servicio en una ventana")
+    cr.add_argument("--servicio", default="sonda")
+    cr.add_argument("--desde", required=True, type=_fecha_arg)
+    cr.add_argument("--hasta", required=True, type=_fecha_arg)
+    cr.add_argument("--esperados", type=int)
+    ii = sub.add_parser("informe-ingesta", help="H-031: memoria, cola y contrapresion en una ventana")
+    ii.add_argument("--desde", required=True, type=_fecha_arg)
+    ii.add_argument("--hasta", required=True, type=_fecha_arg)
     args = p.parse_args(argv)
+
+    if args.orden == "medir-latencia":
+        return medir_latencia(args.api, args.activo, args.minutos, args.salida)
+    if args.orden == "contar-registros":
+        return contar_registros(args.desde, args.hasta, args.servicio, args.esperados)
 
     if args.orden in ("agregacion", "reagregar"):
         if not os.environ.get("PG_URL"):
@@ -603,6 +751,10 @@ def main(argv=None) -> int:
             return retencion(cliente, args.tabla)
         if args.orden == "espacio":
             return espacio(cliente)
+        if args.orden == "contar":
+            return contar(cliente, args.tabla, args.activo, args.desde, args.hasta, args.esperados)
+        if args.orden == "informe-ingesta":
+            return informe_ingesta(cliente, args.desde, args.hasta)
         return huecos(cliente, args.activo, args.minutos, args.metrica)
     except ErrorInflux as e:
         print(f"error del almacen: {e}", file=sys.stderr)

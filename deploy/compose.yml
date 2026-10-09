@@ -95,6 +95,13 @@ services:
       RUTA_SALIDA:     /datos/salida   # verdad de referencia del laboratorio y rechazos
       RUTA_CATALOGO:   /etc/zenit/catalogo/catalogo.json   # respaldo si PostgreSQL nunca respondio
       CATALOGO_CADA_S: ${CATALOGO_CADA_S:-30}
+      # H-031: lotes y colas configurables. Las colas estan dimensionadas para
+      # caber, llenas, dentro del limite de memoria de abajo.
+      LINEAS_POR_LOTE: ${LINEAS_POR_LOTE:-5000}
+      CAPACIDAD_LINEAS: ${CAPACIDAD_LINEAS:-200000}
+      FILAS_POR_LOTE_ANALITICO: ${FILAS_POR_LOTE_ANALITICO:-5000}
+      CAPACIDAD_FILAS_ANALITICO: ${CAPACIDAD_FILAS_ANALITICO:-100000}
+      LIMITE_MEMORIA_INGESTA: ${LIMITE_MEMORIA_INGESTA:-768m}
       TOKEN_INGESTA:   ${TOKEN_INGESTA:?falta el token de ingesta}
       SERVICIO_POR_DEFECTO: ${SERVICIO_POR_DEFECTO:-host}
     volumes:
@@ -103,6 +110,12 @@ services:
       # ve los cambios cuando el editor reemplaza el archivo, y el catalogo
       # se relee en caliente.
       - ./catalogo:/etc/zenit/catalogo:ro
+    # H-031: limite de memoria declarado. Si la cola se llena, la ingesta
+    # responde UNAVAILABLE en vez de crecer; el limite es la red de seguridad.
+    deploy:
+      resources:
+        limits:
+          memory: ${LIMITE_MEMORIA_INGESTA:-768m}
     ports:
       - "127.0.0.1:8080:8080"         # salud y contadores: solo desde dentro
     # 4317 NO se publica: solo lo alcanza el borde, por la red interna

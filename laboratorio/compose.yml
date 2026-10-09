@@ -102,6 +102,15 @@ services:
       - ./perfiles:/perfiles:ro
     profiles: ["carga"]
 
+  # Emisor de prueba para las mediciones de la ingesta (P-REN-01, P-REN-02,
+  # H-016, H-031). No corre solo: se lanza con "run --rm sonda <modo>".
+  sonda:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-sonda:${VERSION_APP:-0.2.0}
+    build: ./servicios/sonda
+    init: true
+    depends_on: [agente]
+    profiles: ["medicion"]
+
   # Inyector de fallos y campana desatendida (epica 2). Opera solo sobre este
   # nodo: no tiene red (network_mode: none), asi que no puede alcanzar la
   # plataforma (RF-LAB-04). Su unica salida es el archivo de verdad de
