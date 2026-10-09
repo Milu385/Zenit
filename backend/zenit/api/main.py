@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from zenit import salud as salud_fuentes
+from zenit.clickhouse import ErrorClickHouse
 from zenit.influx import ClienteInflux, ErrorInflux
 from zenit.repositorio import ErrorConsulta, RepositorioSeries
 
@@ -73,7 +74,8 @@ def _activo_publico(a: dict, salud_activo: Optional[dict] = None) -> dict:
     }
 
 
-def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path, pg_url: Optional[str] = None) -> FastAPI:
+def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path, pg_url: Optional[str] = None,
+              analitico=None) -> FastAPI:
     app = FastAPI(
         title="Zenit",
         version="0.2.0",
@@ -86,13 +88,21 @@ def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path, pg_url: Optio
     async def _consulta_invalida(_, e: ErrorConsulta):
         return JSONResponse(status_code=422, content={"detail": str(e)})
 
+    @app.exception_handler(ErrorClickHouse)
+    async def _analitico_caido(_, e: ErrorClickHouse):
+        return JSONResponse(status_code=503, content={"detail": "el almacen de registros y trazas no respondio",
+                                                      "causa": str(e)})
+
     @app.exception_handler(ErrorInflux)
     async def _almacen_caido(_, e: ErrorInflux):
         return JSONResponse(status_code=503, content={"detail": "el almacen de series no respondio", "causa": str(e)})
 
     @app.get("/api/salud", tags=["sistema"])
     def salud():
-        return {"estado": "ok", "almacen": repositorio.disponible()}
+        respuesta = {"estado": "ok", "almacen": repositorio.disponible()}
+        if analitico is not None:
+            respuesta["analitico"] = analitico.disponible()
+        return respuesta
 
     def _pg(funcion):
         import psycopg
@@ -209,6 +219,50 @@ def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path, pg_url: Optio
         filas = _pg(catalogo.listar_huerfanas)
         return [{k: _iso(v) for k, v in f.items()} for f in filas]
 
+    # ---------------------------------------------------------------- registros y trazas
+    def _analitico():
+        if analitico is None:
+            raise HTTPException(503, detail="registros y trazas no estan configurados (CLICKHOUSE_URL)")
+        return analitico
+
+    @app.get("/api/activos/{activo}/registros", tags=["registros y trazas"])
+    def registros(activo: str, desde: Optional[datetime] = None, hasta: Optional[datetime] = None,
+                  severidad_minima: int = Query(0, ge=0, le=24, description="17 = error, 13 = aviso, 9 = info"),
+                  texto: Optional[str] = Query(None, max_length=200), servicio: Optional[str] = None,
+                  limite: int = Query(200, ge=1, le=2000)):
+        """Registros del activo en la ventana, del mas reciente al mas viejo (H-016)."""
+        inicio, fin = _rango(desde, hasta)
+        filas = _analitico().registros(activo, inicio, fin, severidad_minima=severidad_minima, texto=texto,
+                                       servicio=servicio, limite=limite)
+        return {"activo": activo, "desde": inicio.isoformat(), "hasta": fin.isoformat(), "registros": filas}
+
+    @app.get("/api/activos/{activo}/trazas", tags=["registros y trazas"])
+    def trazas(activo: str, desde: Optional[datetime] = None, hasta: Optional[datetime] = None,
+               solo_errores: bool = False, limite: int = Query(100, ge=1, le=2000)):
+        """Trazas que tocaron el activo en la ventana, resumidas por traza (H-017)."""
+        inicio, fin = _rango(desde, hasta)
+        filas = _analitico().trazas(activo, inicio, fin, solo_errores=solo_errores, limite=limite)
+        return {"activo": activo, "desde": inicio.isoformat(), "hasta": fin.isoformat(), "trazas": filas}
+
+    @app.get("/api/trazas/{traza_id}", tags=["registros y trazas"])
+    def traza(traza_id: str):
+        """Todos los spans de una traza, en cualquier activo que haya cruzado."""
+        spans = _analitico().traza(traza_id)
+        if not spans:
+            raise HTTPException(404, detail="no hay spans con ese traza_id en los ultimos 7 dias")
+        return {"traza_id": traza_id, "spans": spans}
+
+    @app.get("/api/activos/{activo}/correlacion", tags=["registros y trazas"])
+    def correlacion(activo: str, desde: Optional[datetime] = None, hasta: Optional[datetime] = None,
+                    limite: int = Query(200, ge=1, le=2000)):
+        """Las senales del activo en una ventana (RF-ALM-07): conteos y los
+        registros unidos con el span que los produjo, por el mismo identificador
+        canonico. Es la evidencia que usa el diagnostico."""
+        inicio, fin = _rango(desde, hasta)
+        a = _analitico()
+        return {"activo": activo, "desde": inicio.isoformat(), "hasta": fin.isoformat(),
+                "resumen": a.resumen(activo, inicio, fin), "registros": a.correlacion(activo, inicio, fin, limite)}
+
     @app.get("/api/activos/{activo}/metricas", tags=["series"])
     def metricas(activo: str):
         """Metricas con datos de este activo en la ultima hora."""
@@ -275,7 +329,16 @@ def _desde_entorno() -> FastAPI:
         RepositorioInflux(cliente, os.environ.get("INFLUX_BD", "zenit_raw")),
         Path(os.environ.get("RUTA_CATALOGO", "/etc/zenit/catalogo/catalogo.json")),
         pg_url=os.environ.get("PG_URL") or None,
+        analitico=_analitico_desde_entorno(),
     )
+
+
+def _analitico_desde_entorno():
+    if not os.environ.get("CLICKHOUSE_URL"):
+        return None
+    from zenit.repositorio.analitico import RepositorioAnalitico
+
+    return RepositorioAnalitico.desde_entorno()
 
 
 app = _desde_entorno()

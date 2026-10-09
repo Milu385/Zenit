@@ -47,6 +47,8 @@ services:
       ALMACEN_BD:      ${ALMACEN_BD:-zenit}
       OTEL_SERVICE_NAME: catalogo
       OTEL_TRACES_EXPORTER: ${EXPORTADOR_TRAZAS:-none}
+      OTEL_LOGS_EXPORTER: ${EXPORTADOR_REGISTROS:-none}
+      OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://agente:4317
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/salud')\""]
@@ -70,6 +72,8 @@ services:
       URL_CATALOGO: http://catalogo:8000
       OTEL_SERVICE_NAME: pedidos
       OTEL_TRACES_EXPORTER: ${EXPORTADOR_TRAZAS:-none}
+      OTEL_LOGS_EXPORTER: ${EXPORTADOR_REGISTROS:-none}
+      OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://agente:4317
     ports:
       - "${IP_PEDIDOS:-127.0.0.1}:8000:8000"   # on-premise la cambia por variable

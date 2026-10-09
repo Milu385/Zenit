@@ -50,6 +50,7 @@ def pasada(url: str, proveedores: list, despues=None) -> list:
 
 def principal(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)   # una linea por peticion no dice nada
     p = argparse.ArgumentParser(prog="python -m zenit.descubrimiento")
     p.add_argument("--cada", type=int, default=0, help="segundos entre pasadas; 0 = una sola")
     p.add_argument("--proveedor", action="append", help="solo este proveedor (repetible)")

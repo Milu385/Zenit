@@ -362,6 +362,31 @@ def migrar_pg(carpeta: Path, ruta_catalogo: str = "") -> int:
     return 0
 
 
+def migrar_clickhouse(carpeta: Path) -> int:
+    """Aplica deploy/clickhouse/*.sql (todo IF NOT EXISTS). Lo corre el servicio
+    clickhouse-esquema en cada arranque: el esquema se administra desde el
+    repositorio y no lo crea nadie automaticamente (ADR-007)."""
+    from zenit.clickhouse import ClienteClickHouse
+
+    url = os.environ.get("CLICKHOUSE_URL")
+    if not url:
+        print("falta CLICKHOUSE_URL", file=sys.stderr)
+        return 2
+    cliente = ClienteClickHouse(url, os.environ.get("CLICKHOUSE_USUARIO", "zenit"), os.environ.get("CLICKHOUSE_CLAVE", ""))
+    for intento in range(30):
+        if cliente.disponible():
+            break
+        time.sleep(2)
+    archivos = sorted(Path(carpeta).glob("*.sql"))
+    if not archivos:
+        print(f"no hay archivos .sql en {carpeta}", file=sys.stderr)
+        return 2
+    for a in archivos:
+        n = cliente.aplicar_esquema(a.read_text())
+        print(f"aplicado  {a.name} ({n} sentencias)")
+    return 0
+
+
 def orden_catalogo(args) -> int:
     from zenit import catalogo
 
@@ -517,6 +542,8 @@ def main(argv=None) -> int:
     ka.add_argument("--region")
     ka.add_argument("--entorno", default="lab")
     sub.add_parser("asociar-huerfanas", help="reasigna la telemetria huerfana cuya clave ya esta en el catalogo")
+    mc = sub.add_parser("migrar-clickhouse", help="aplica deploy/clickhouse/*.sql")
+    mc.add_argument("--carpeta", default=os.environ.get("RUTA_ESQUEMA_CH", "/etc/zenit/clickhouse"))
     rt = sub.add_parser("retencion", help="verifica que cada base descarta lo que paso su ventana (H-020)")
     rt.add_argument("--tabla", default="system_cpu_utilization")
     sub.add_parser("espacio", help="espacio ocupado por cada nivel (H-020)")
@@ -545,6 +572,8 @@ def main(argv=None) -> int:
 
     if args.orden == "migrar-pg":
         return migrar_pg(Path(args.carpeta), args.catalogo)
+    if args.orden == "migrar-clickhouse":
+        return migrar_clickhouse(Path(args.carpeta))
     if args.orden == "catalogo":
         return orden_catalogo(args)
 

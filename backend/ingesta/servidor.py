@@ -33,10 +33,11 @@ from opentelemetry.proto.collector.logs.v1 import logs_service_pb2, logs_service
 from opentelemetry.proto.collector.metrics.v1 import metrics_service_pb2, metrics_service_pb2_grpc
 from opentelemetry.proto.collector.trace.v1 import trace_service_pb2, trace_service_pb2_grpc
 
-from destinos import DestinoInflux, DestinoJsonl, Lote
-from extraccion import atributos, extraer_puntos, resolver_identidad, valor_de
+from destinos import DestinoInflux, DestinoJsonl, DestinoPorLotes, Lote
+from extraccion import ARCHIVO_VERDAD, atributos, extraer_puntos, fila_registro, fila_traza, resolver_identidad
 from zenit import salud
 from zenit.catalogo import AcumuladorHuerfanas, CatalogoPG, conectar
+from zenit.clickhouse import ClienteClickHouse
 from zenit.influx import ClienteInflux, ErrorInflux
 from zenit.protocolo_linea import construir_linea
 
@@ -157,6 +158,16 @@ class Catalogo:
         return {"activos": len(self._datos), "cargado": self.cargado, "errores": self.errores}
 
 
+def es_verdad(item: dict) -> bool:
+    """Un registro de la verdad de referencia del laboratorio. El filelog del
+    agente pone log.file.name; por si una version del agente no lo pusiera,
+    tambien se reconoce por la forma de la linea que escribe el inyector."""
+    if item.get("atributos", {}).get("log.file.name") == ARCHIVO_VERDAD:
+        return True
+    cuerpo = item.get("cuerpo") or ""
+    return cuerpo.startswith("{") and '"uid"' in cuerpo and '"evento"' in cuerpo
+
+
 # ------------------------------------------------------------------ nucleo
 class PuntoDeEntrada:
     """Todo el estado del servicio, inyectable para las pruebas."""
@@ -175,7 +186,9 @@ class PuntoDeEntrada:
         self.bd_interna = salud.BD_INTERNA
         self.ultimo_volcado_salud: Optional[str] = None
         self.destino_metricas = None
-        self.destinos_archivo: dict = {}
+        self.destinos_archivo: dict = {}       # registros y trazas sin ClickHouse
+        self.destinos_analiticos: dict = {}    # registros y trazas a ClickHouse
+        self.verdad = None                     # DestinoJsonl de la verdad de referencia
 
     def identidad(self, recurso):
         return resolver_identidad(atributos(recurso.attributes), self.catalogo.actual(), self.servicio_por_defecto)
@@ -263,31 +276,61 @@ class PuntoDeEntrada:
         return True
 
     # ---- trazas y registros: a archivo hasta la epica 1
-    def exportar_archivo(self, senal: str, bloques, extraer) -> bool:
-        """False si no se pudo escribir: quien llama responde UNAVAILABLE y el
-        agente reintenta desde su cola persistente. Responder OK sin haber
-        guardado perderia la linea en silencio (la verdad de referencia del
-        laboratorio viaja por aqui)."""
-        registros, huerfanos, por_bloque = [], 0, []
+    def exportar_senal(self, senal: str, bloques, extraer) -> bool:
+        """Registros y trazas (H-016, H-017).
+
+        Con ClickHouse configurado van al motor analitico por lotes, como las
+        metricas a InfluxDB: si la cola esta llena se devuelve False y quien
+        llama responde UNAVAILABLE para que el agente reintente desde su cola
+        persistente. Sin ClickHouse, al archivo, como en las epicas 0 y 2.
+
+        La verdad de referencia del laboratorio (registros leidos de
+        verdad.jsonl) ademas se escribe al archivo, que es lo que lee el
+        cargador. Si eso falla, tambien se responde UNAVAILABLE: responder OK
+        sin haberla guardado la perderia en silencio.
+        """
+        filas, huerfanos, por_bloque, verdad = [], 0, [], []
         for bloque in bloques:
             ident = self.identidad(bloque.resource)
-            antes = len(registros)
+            antes = len(filas)
             for item in extraer(bloque):
-                registros.append({**ident.etiquetas, **item})
+                fila = {**ident.etiquetas, **item}
+                filas.append(fila)
                 huerfanos += ident.huerfana
-            por_bloque.append((ident, len(registros) - antes))
-        if not registros:
+                if senal == "registros" and es_verdad(item):
+                    verdad.append(fila)
+            por_bloque.append((ident, len(filas) - antes))
+        if not filas:
             return True
-        self.contadores.sumar(senal, "recibidas", len(registros))
-        self.contadores.sumar(senal, "huerfanas", huerfanos)
-        try:
-            self.destinos_archivo[senal].aceptar_registros(registros, len(registros))
-        except OSError:
-            log.exception("no se pudo escribir %s", senal)
-            self.contadores.sumar(senal, "errores", len(registros))
-            return False
+        analitico = self.destinos_analiticos.get(senal)
+        if analitico is not None and verdad:
+            try:
+                self.verdad.aceptar_registros(verdad, 0)
+            except OSError:
+                log.exception("no se pudo guardar la verdad de referencia")
+                return False
+
+        c = self.contadores
+        c.sumar(senal, "recibidas", len(filas))
+        if analitico is None:
+            try:
+                self.destinos_archivo[senal].aceptar_registros(filas, len(filas))
+            except OSError:
+                log.exception("no se pudo escribir %s", senal)
+                c.sumar(senal, "errores", len(filas))
+                return False
+        else:
+            lineas = [json.dumps(f, ensure_ascii=False, separators=(",", ":")) for f in filas]
+            if not analitico.aceptar(Lote(lineas, len(filas))):
+                c.sumar(senal, "recibidas", -len(filas))
+                c.sin_espacio()
+                return False
+        c.sumar(senal, "huerfanas", huerfanos)
         self._contar_fuentes(senal, por_bloque)
         return True
+
+    # nombre de las epicas 0 y 2
+    exportar_archivo = exportar_senal
 
     def estado(self) -> dict:
         d = self.destino_metricas
@@ -299,6 +342,10 @@ class PuntoDeEntrada:
                 "reintentos": getattr(d, "reintentos", 0),
                 "ultimo_error": getattr(d, "ultimo_error", None),
             },
+            "analitico": {
+                senal: {"filas_pendientes": d.pendientes, "reintentos": d.reintentos, "ultimo_error": d.ultimo_error}
+                for senal, d in self.destinos_analiticos.items()
+            },
             "catalogo": self.catalogo.estado(),
             "huerfanas_volcadas": self.ultimo_volcado_huerfanas,
             "salud_volcada": self.ultimo_volcado_salud,
@@ -309,6 +356,7 @@ class PuntoDeEntrada:
         c = self.contadores.instantanea()
         return {
             "lineas_pendientes": getattr(self.destino_metricas, "pendientes", 0),
+            "filas_pendientes_analitico": sum(d.pendientes for d in self.destinos_analiticos.values()),
             "contrapresion": c["contrapresion"],
             "peticiones_rechazadas": c["rechazadas"],
             "rechazadas_por_almacen": sum(v["rechazadas_por_almacen"] for v in c["senales"].values()),
@@ -403,13 +451,8 @@ class Trazas(trace_service_pb2_grpc.TraceServiceServicer):
         def extraer(bloque):
             for alcance in bloque.scope_spans:
                 for span in alcance.spans:
-                    yield {"traza_id": span.trace_id.hex(),
-                           "span_id": span.span_id.hex(),
-                           "padre_id": span.parent_span_id.hex(),
-                           "nombre": span.name,
-                           "inicio_ns": span.start_time_unix_nano,
-                           "fin_ns": span.end_time_unix_nano}
-        if not self.nucleo.exportar_archivo("trazas", request.resource_spans, extraer):
+                    yield fila_traza(span)
+        if not self.nucleo.exportar_senal("trazas", request.resource_spans, extraer):
             context.abort(grpc.StatusCode.UNAVAILABLE, "no se pudo guardar, reintentar")
         return trace_service_pb2.ExportTraceServiceResponse()
 
@@ -422,10 +465,8 @@ class Registros(logs_service_pb2_grpc.LogsServiceServicer):
         def extraer(bloque):
             for alcance in bloque.scope_logs:
                 for reg in alcance.log_records:
-                    yield {"severidad": reg.severity_text,
-                           "cuerpo": valor_de(reg.body),
-                           "momento_ns": reg.time_unix_nano or reg.observed_time_unix_nano}
-        if not self.nucleo.exportar_archivo("registros", request.resource_logs, extraer):
+                    yield fila_registro(reg)
+        if not self.nucleo.exportar_senal("registros", request.resource_logs, extraer):
             context.abort(grpc.StatusCode.UNAVAILABLE, "no se pudo guardar, reintentar")
         return logs_service_pb2.ExportLogsServiceResponse()
 
@@ -498,6 +539,22 @@ def construir_desde_entorno() -> PuntoDeEntrada:
     for senal in ("trazas", "registros"):
         nucleo.destinos_archivo[senal] = DestinoJsonl(
             salida, senal, al_escribir=lambda n, s=senal: c.sumar(s, "emitidas", n))
+    if os.environ.get("CLICKHOUSE_URL"):
+        # H-016 y H-017: el mismo destino por lotes que las metricas, con su
+        # propia cola. Un ClickHouse lento no frena a InfluxDB ni al reves.
+        ch = ClienteClickHouse(os.environ["CLICKHOUSE_URL"], os.environ.get("CLICKHOUSE_USUARIO", "zenit"),
+                               os.environ.get("CLICKHOUSE_CLAVE", ""))
+        for senal in ("registros", "trazas"):
+            nucleo.destinos_analiticos[senal] = DestinoPorLotes(
+                ch, senal,
+                al_escribir=lambda n, s=senal: c.sumar(s, "emitidas", n),
+                al_rechazar=lambda n, s=senal: c.sumar(s, "rechazadas_por_almacen", n),
+                capacidad_lineas=int(os.environ.get("CAPACIDAD_FILAS_ANALITICO", "100000")),
+                lineas_por_lote=int(os.environ.get("FILAS_POR_LOTE_ANALITICO", "5000")),
+                carpeta_rechazos=salida / "rechazadas",
+                prefijo_rechazos=senal, extension_rechazos=".jsonl",
+            )
+        nucleo.verdad = DestinoJsonl(salida, "registros", al_escribir=lambda n: None)
     return nucleo
 
 
@@ -534,6 +591,8 @@ def principal():
     log.info("deteniendo: se deja de aceptar y se vacia la cola")
     servidor.stop(grace=5).wait()
     nucleo.destino_metricas.detener(esperar_s=15)   # el compose da 30 s
+    for destino in nucleo.destinos_analiticos.values():
+        destino.detener(esperar_s=5)
     parar_volcado.set()
     nucleo.volcar_salud(pg_url)
     if pg_url:

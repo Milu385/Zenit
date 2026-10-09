@@ -165,3 +165,69 @@ def extraer_puntos(metrica, ahora_ns: int) -> Iterator[PuntoMetrica]:
     # Tipo desconocido: se reporta con tabla y sin valores, y quien llama lo
     # cuenta aparte. No se ignora en silencio.
     yield PuntoMetrica(tabla=tabla, dimensiones={}, tiempo_ns=ahora_ns, valores=[], sin_valor=True)
+
+
+# ------------------------------------------------------------------ registros y trazas
+# El receptor filelog del agente pone este nombre en log.file.name. Los
+# registros que lo traen son la verdad de referencia del laboratorio.
+ARCHIVO_VERDAD = "verdad.jsonl"
+
+_TIPOS_SPAN = {0: "sin_definir", 1: "interno", 2: "servidor", 3: "cliente", 4: "productor", 5: "consumidor"}
+_ESTADOS_SPAN = {0: "sin_definir", 1: "ok", 2: "error"}
+
+
+def momento_texto(ns: int) -> str:
+    """'AAAA-MM-DD hh:mm:ss.nnnnnnnnn' en UTC: lo que ClickHouse acepta para
+    DateTime64(9) sin perder los nanosegundos."""
+    import time as _t
+
+    if not ns or ns < 0:
+        ns = _t.time_ns()
+    segundos, fraccion = divmod(int(ns), 1_000_000_000)
+    return _t.strftime("%Y-%m-%d %H:%M:%S", _t.gmtime(segundos)) + f".{fraccion:09d}"
+
+
+def _texto(valor) -> str:
+    if valor is None:
+        return ""
+    if isinstance(valor, str):
+        return valor
+    import json as _json
+
+    return _json.dumps(valor, ensure_ascii=False, default=str)
+
+
+def _mapa(lista) -> dict:
+    return {kv.key: _texto(valor_de(kv.value)) for kv in lista}
+
+
+def fila_registro(reg) -> dict:
+    """Un LogRecord de OTLP como fila de zenit.registros (sin las etiquetas
+    canonicas, que pone quien llama)."""
+    return {
+        "momento": momento_texto(reg.time_unix_nano or reg.observed_time_unix_nano),
+        "severidad": reg.severity_text,
+        "severidad_num": int(reg.severity_number),
+        "cuerpo": _texto(valor_de(reg.body)),
+        "traza_id": reg.trace_id.hex(),
+        "span_id": reg.span_id.hex(),
+        "atributos": _mapa(reg.attributes),
+    }
+
+
+def fila_traza(span) -> dict:
+    """Un Span de OTLP como fila de zenit.trazas."""
+    inicio, fin = span.start_time_unix_nano, span.end_time_unix_nano
+    return {
+        "inicio": momento_texto(inicio),
+        "fin": momento_texto(fin or inicio),
+        "duracion_ns": max(0, int(fin) - int(inicio)) if fin and inicio else 0,
+        "traza_id": span.trace_id.hex(),
+        "span_id": span.span_id.hex(),
+        "padre_id": span.parent_span_id.hex(),
+        "nombre": span.name,
+        "tipo": _TIPOS_SPAN.get(int(span.kind), "sin_definir"),
+        "estado": _ESTADOS_SPAN.get(int(span.status.code), "sin_definir"),
+        "estado_mensaje": span.status.message,
+        "atributos": _mapa(span.attributes),
+    }

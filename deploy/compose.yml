@@ -1,12 +1,16 @@
 name: zenit-plataforma
 
-# Epica 0 completa (borde, punto de entrada, almacen de series, API e interfaz)
-# y, desde la epica 2, PostgreSQL con el cargador de la verdad de referencia.
+# Epica 0 (borde, punto de entrada, almacen de series, API e interfaz), epica 2
+# (PostgreSQL y el cargador de la verdad de referencia) y epica 1 (catalogo,
+# descubrimiento, agregacion, ClickHouse y mTLS).
 #
-#   internet ──4317 (OTLP, TLS)──▶ borde ──▶ ingesta ──▶ influxdb
-#                                              └─▶ registros ──▶ cargador ──▶ postgres
-#   equipo   ──443 (HTTPS)──────▶ borde ──▶ api ──────▶ influxdb, postgres
-#                                       └─▶ web
+#   nodos ──4317 (OTLP, mTLS)──▶ borde ──▶ ingesta ──▶ influxdb (metricas)
+#                                            ├──────▶ clickhouse (registros y trazas)
+#                                            └─▶ verdad ──▶ cargador ──▶ postgres
+#   equipo ──443 (HTTPS)───────▶ borde ──▶ api ──▶ influxdb, clickhouse, postgres
+#                                     └─▶ web
+#   descubridor ──▶ APIs de los proveedores (solo lectura) ──▶ postgres
+#   agregador   ──▶ influxdb (crudo ▶ 1m ▶ 1h)
 #
 # Solo el borde publica puertos. El grupo de seguridad limita el 4317 a las IP
 # de los nodos (admitir-nodo.sh) y el 443 a las del equipo (abrir-interfaz.sh).
@@ -18,6 +22,11 @@ x-influx: &influx
 
 x-pg: &pg
   PG_URL: postgresql://zenit:${PG_CLAVE:?falta PG_CLAVE; openssl rand -hex 24}@postgres:5432/zenit
+
+x-ch: &ch
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USUARIO: zenit
+  CLICKHOUSE_CLAVE: ${CH_CLAVE:?falta CH_CLAVE; openssl rand -hex 24}
 
 services:
 
@@ -82,7 +91,7 @@ services:
       ZENIT_ENTORNO:   ${ZENIT_ENTORNO:-desconocido}
       ZENIT_PROVEEDOR: ${ZENIT_PROVEEDOR:-desconocido}
       ZENIT_REGION:    ${ZENIT_REGION:-desconocido}
-      <<: [*influx, *pg]
+      <<: [*influx, *pg, *ch]
       RUTA_SALIDA:     /datos/salida   # verdad de referencia del laboratorio y rechazos
       RUTA_CATALOGO:   /etc/zenit/catalogo/catalogo.json   # respaldo si PostgreSQL nunca respondio
       CATALOGO_CADA_S: ${CATALOGO_CADA_S:-30}
@@ -102,6 +111,8 @@ services:
         condition: service_completed_successfully
       postgres-esquema:
         condition: service_completed_successfully
+      clickhouse-esquema:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request;urllib.request.urlopen('http://localhost:8080/salud')"]
@@ -109,6 +120,49 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
+
+  # Registros y trazas (H-016, H-017, ADR-007). Un solo motor analitico; la
+  # ingesta escribe en el por lotes. 8123 NO se publica.
+  clickhouse:
+    image: clickhouse/clickhouse-server:${VERSION_CLICKHOUSE:-24.8}
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: zenit
+      CLICKHOUSE_PASSWORD: ${CH_CLAVE:?falta CH_CLAVE; openssl rand -hex 24}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "0"
+    volumes:
+      - ch_datos:/var/lib/clickhouse
+      - ./clickhouse/config.d/zenit.xml:/etc/clickhouse-server/config.d/zenit.xml:ro
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    deploy:
+      resources:
+        limits:
+          memory: ${LIMITE_MEMORIA_CLICKHOUSE:-2g}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8123/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Una sola vez por arranque: crea o completa las tablas de registros y
+  # trazas desde deploy/clickhouse/*.sql. Idempotente.
+  clickhouse-esquema:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "zenit.admin", "migrar-clickhouse"]
+    restart: "no"
+    environment:
+      <<: *ch
+      RUTA_ESQUEMA_CH: /etc/zenit/clickhouse
+    volumes:
+      - ./clickhouse:/etc/zenit/clickhouse:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
 
   # Una sola vez por arranque: aplica deploy/postgres/*.sql (lo nuevo de cada
   # epica, en una base que ya existia) e importa catalogo.json conservando los
@@ -143,7 +197,7 @@ services:
     command: ["python", "-m", "zenit.descubrimiento", "--cada", "${DESCUBRIMIENTO_CADA:-900}"]
     restart: unless-stopped
     environment:
-      <<: [*influx, *pg]
+      <<: [*influx, *pg, *ch]
       DO_TOKEN: ${DO_TOKEN:-}
       DO_ETIQUETA: ${DO_ETIQUETA:-zenit-nodo}
       PROXMOX_URL: ${PROXMOX_URL:-}
@@ -158,6 +212,8 @@ services:
       - ./secretos/descubrimiento:/run/zenit/descubrimiento:ro
     depends_on:
       postgres-esquema:
+        condition: service_completed_successfully
+      clickhouse-esquema:
         condition: service_completed_successfully
 
   # Resumenes por minuto y por hora (H-018), cada 60 s. La primera vez
@@ -185,7 +241,7 @@ services:
       dockerfile: Dockerfile.api
     restart: unless-stopped
     environment:
-      <<: [*influx, *pg]
+      <<: [*influx, *pg, *ch]
       RUTA_CATALOGO: /etc/zenit/catalogo/catalogo.json
     volumes:
       - ./catalogo:/etc/zenit/catalogo:ro
@@ -194,6 +250,8 @@ services:
       influxdb-bases:
         condition: service_completed_successfully
       postgres-esquema:
+        condition: service_completed_successfully
+      clickhouse-esquema:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c",
@@ -295,6 +353,7 @@ services:
       retries: 3
 
 volumes:
+  ch_datos:                            # registros y trazas (7 dias)
   influx_datos:                        # series temporales, sobrevive al reinicio
   ingesta_datos:                       # trazas y registros en archivo
   pg_datos:                            # inyecciones, anomalias, diagnosticos, usuarios

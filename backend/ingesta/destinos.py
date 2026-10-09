@@ -2,11 +2,14 @@
 
 Dos implementaciones con la misma forma:
 
-- DestinoInflux: el almacen real (H-005). Escribe por lotes desde un hilo
-  propio y reintenta si el almacen no responde.
+- DestinoPorLotes (antes DestinoInflux): escribe por lotes desde un hilo
+  propio y reintenta si el almacen no responde. Sirve para InfluxDB (lineas
+  de protocolo de linea) y para ClickHouse (lineas JSONEachRow): solo cambia
+  el cliente, que tiene que ofrecer escribir(destino, cuerpo) y lanzar
+  ErrorAlmacen con el estado HTTP (H-016, H-017, H-031).
 - DestinoJsonl: archivo de lineas JSON. Sirve para correr el punto de entrada
-  sin almacen y es el destino provisional de trazas y registros hasta la
-  epica 1.
+  sin almacenes y guarda la verdad de referencia del laboratorio, que lee el
+  cargador.
 
 El servidor no sabe cual de los dos tiene. Cambiar de destino es cambiar una
 variable de entorno.
@@ -19,7 +22,7 @@ from collections import deque
 from pathlib import Path
 from typing import Callable, Optional
 
-from zenit.influx import ClienteInflux, ErrorInflux
+from zenit.influx import ErrorAlmacen
 
 log = logging.getLogger("ingesta.destinos")
 
@@ -37,7 +40,7 @@ class Lote:
         self.puntos = puntos
 
 
-class DestinoInflux:
+class DestinoPorLotes:
     """Escritura por lotes con contrapresion.
 
     Si la cola esta llena, aceptar() devuelve False y el servidor responde
@@ -65,7 +68,7 @@ class DestinoInflux:
 
     def __init__(
         self,
-        cliente: ClienteInflux,
+        cliente,
         bd: str,
         al_escribir: Callable[[int], None],
         al_rechazar: Callable[[int], None],
@@ -74,6 +77,8 @@ class DestinoInflux:
         espera_lote_s: float = 1.0,
         carpeta_rechazos: Optional[Path] = None,
         intentos_5xx: int = 5,
+        prefijo_rechazos: str = "metricas",
+        extension_rechazos: str = ".lp",
     ):
         self._cliente = cliente
         self._bd = bd
@@ -84,6 +89,8 @@ class DestinoInflux:
         self._espera = espera_lote_s
         self._rechazos = Path(carpeta_rechazos) if carpeta_rechazos else None
         self._intentos_5xx = intentos_5xx
+        self._prefijo = prefijo_rechazos
+        self._extension = extension_rechazos
 
         self._cola: deque[Lote] = deque()
         self._lineas_en_cola = 0
@@ -92,7 +99,7 @@ class DestinoInflux:
         self.ultimo_error: Optional[str] = None
         self.reintentos = 0
 
-        self._hilo = threading.Thread(target=self._bucle, name="escritor-influx", daemon=True)
+        self._hilo = threading.Thread(target=self._bucle, name=f"escritor-{prefijo_rechazos}", daemon=True)
         self._hilo.start()
 
     # ---------------------------------------------------------------- entrada
@@ -138,7 +145,7 @@ class DestinoInflux:
                 self._candado.wait(segundos)
 
     @staticmethod
-    def _clase(e: ErrorInflux) -> str:
+    def _clase(e: ErrorAlmacen) -> str:
         if e.estado is None or e.estado in REINTENTO_SIN_LIMITE:
             return "esperar"
         if e.estado in NO_REINTENTABLES:
@@ -154,7 +161,7 @@ class DestinoInflux:
                 self._cliente.escribir(self._bd, cuerpo)
                 self.ultimo_error = None
                 return "ok"
-            except ErrorInflux as e:
+            except ErrorAlmacen as e:
                 self.ultimo_error = str(e)
                 clase = self._clase(e)
                 if clase == "invalido":
@@ -177,7 +184,7 @@ class DestinoInflux:
         if self._rechazos is not None:
             try:
                 self._rechazos.mkdir(parents=True, exist_ok=True)
-                archivo = self._rechazos / f"metricas-{time.strftime('%Y%m%d')}.lp"
+                archivo = self._rechazos / f"{self._prefijo}-{time.strftime('%Y%m%d')}{self._extension}"
                 with archivo.open("a", encoding="utf-8") as f:
                     f.write(f"# {time.strftime('%Y-%m-%dT%H:%M:%S')} {self.ultimo_error}\n")
                     f.write("\n".join(lote.lineas) + "\n")
@@ -228,6 +235,10 @@ class DestinoInflux:
         with self._candado:
             self._candado.notify_all()
         self._hilo.join(timeout=2)
+
+
+# El nombre de las epicas 0 y 2; las pruebas y la documentacion lo usan.
+DestinoInflux = DestinoPorLotes
 
 
 class DestinoJsonl:

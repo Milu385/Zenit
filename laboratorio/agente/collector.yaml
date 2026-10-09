@@ -18,7 +18,7 @@ receivers:
       paging:
       processes:
 
-  # las trazas de la aplicacion entran por aqui
+  # trazas y registros de la aplicacion (SDK de OpenTelemetry) entran por aqui
   otlp:
     protocols:
       grpc:
@@ -34,6 +34,15 @@ receivers:
     start_at: beginning
     storage: file_storage/cola
     poll_interval: 1s
+
+  # registros del sistema operativo del nodo (H-016). Se empieza por el final:
+  # la historia previa al agente no interesa. La posicion se guarda en el
+  # almacenamiento persistente.
+  filelog/sistema:
+    include: [/hostfs/var/log/syslog]
+    start_at: end
+    storage: file_storage/cola
+    poll_interval: 2s
 
 connectors:
   # metricas de llamadas y duracion por servicio, a partir de las trazas
@@ -126,16 +135,23 @@ service:
       receivers:  [hostmetrics, otlp, spanmetrics]
       processors: [resource, batch]
       exporters:  [otlp]
-    # Las trazas solo alimentan a spanmetrics. Guardarlas en la plataforma es
-    # H-017 (epica 1); mandarlas ahora llenaria su disco con archivos que
-    # nadie lee.
+    # Las trazas alimentan a spanmetrics y, desde H-017, se guardan en la
+    # plataforma (ClickHouse, siete dias).
     traces:
       receivers:  [otlp]
       processors: [resource, batch]
-      exporters:  [spanmetrics]
-    # Sin batch: una linea leida y retenida en memoria se perderia si el agente
-    # muere antes de enviarla; asi pasa directo a la cola persistente.
+      exporters:  [otlp, spanmetrics]
+    # Registros de la aplicacion y del sistema (H-016). Comparten la cola
+    # persistente y la politica de las metricas: se reintenta 15 minutos y
+    # despues se descarta, y el descarte queda en los registros del agente.
     logs:
+      receivers:  [otlp, filelog/sistema]
+      processors: [resource, batch]
+      exporters:  [otlp]
+    # La verdad de referencia, aparte. Sin batch: una linea leida y retenida en
+    # memoria se perderia si el agente muere antes de enviarla; asi pasa directo
+    # a la cola persistente de su exportador, que no descarta nunca.
+    logs/verdad:
       receivers:  [filelog/verdad]
       processors: [resource]
       exporters:  [otlp/verdad]

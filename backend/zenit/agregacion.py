@@ -139,6 +139,7 @@ class Agregador:
 
 def principal(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)   # una linea por peticion no dice nada
     p = argparse.ArgumentParser(prog="python -m zenit.agregacion")
     p.add_argument("--cada", type=int, default=0, help="segundos entre ciclos; 0 = uno solo")
     args = p.parse_args(argv)
