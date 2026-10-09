@@ -82,7 +82,7 @@ def principal(argv=None) -> int:
         print("falta PG_URL", file=sys.stderr)
         return 2
     catalogo.esperar_pg(url)
-    despues = None
+    despues = _asociador(url)
     while True:
         try:
             pasada(url, proveedores, despues)
@@ -92,6 +92,14 @@ def principal(argv=None) -> int:
             return 0
         print(f"{datetime.now(timezone.utc):%H:%M:%S} siguiente pasada en {args.cada} s", flush=True)
         time.sleep(args.cada)
+
+
+def _asociador(url: str):
+    """Despues de cada pasada, la telemetria huerfana de los activos que
+    acaban de entrar al catalogo se reasigna (H-011)."""
+    from zenit.huerfanas import asociar_desde_entorno
+
+    return lambda: asociar_desde_entorno(url)
 
 
 def _esperar_para_siempre() -> int:

@@ -51,6 +51,8 @@ class Identidad:
     etiquetas: Mapping[str, str]
     clave_nativa: Optional[str]
     huerfana: bool
+    # el valor de esa clave (zenit-nodo-do): es el origen que lista la vista de huerfanas
+    valor_clave: Optional[str] = None
 
 
 def resolver_identidad(
@@ -70,6 +72,7 @@ def resolver_identidad(
             if encontrado:
                 activo, clave_usada = encontrado, clave
                 break
+    valor_clave = str(recurso_crudo[clave_usada]) if clave_usada else None
 
     etiquetas = {"zenit_asset_id": activo or SIN_RESOLVER}
     for canonica, origen in ORIGEN_EN_RECURSO.items():
@@ -82,7 +85,7 @@ def resolver_identidad(
         etiquetas["service_name"] = servicio_por_defecto
 
     assert set(etiquetas) == set(ETIQUETAS_CANONICAS)
-    return Identidad(etiquetas=etiquetas, clave_nativa=clave_usada, huerfana=activo is None)
+    return Identidad(etiquetas=etiquetas, clave_nativa=clave_usada, huerfana=activo is None, valor_clave=valor_clave)
 
 
 @dataclass

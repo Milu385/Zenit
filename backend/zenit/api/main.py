@@ -130,6 +130,23 @@ def crear_app(repositorio: RepositorioSeries, ruta_catalogo: Path, pg_url: Optio
             raise HTTPException(503, detail=f"el catalogo no respondio: {type(e).__name__}")
         return {k: [{c: _iso(v) for c, v in f.items()} for f in filas] for k, filas in datos.items()}
 
+    @app.get("/api/fuentes/huerfanas", tags=["fuentes"])
+    def huerfanas():
+        """Origenes de telemetria que llegaron sin poder asociarse a un activo (H-011).
+
+        `resuelve_a` dice si la clave ya esta en el catalogo (asociable);
+        `asociada_a`, si la telemetria previa ya se reasigno."""
+        if not pg_url:
+            return []
+        from zenit import catalogo
+
+        try:
+            with catalogo.conectar(pg_url) as c:
+                filas = catalogo.listar_huerfanas(c)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(503, detail=f"el catalogo no respondio: {type(e).__name__}")
+        return [{k: _iso(v) for k, v in f.items()} for f in filas]
+
     @app.get("/api/activos/{activo}/metricas", tags=["series"])
     def metricas(activo: str):
         """Metricas con datos de este activo en la ultima hora."""

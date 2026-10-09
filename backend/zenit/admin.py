@@ -417,7 +417,20 @@ def main(argv=None) -> int:
     ka.add_argument("--proveedor", default="desconocido")
     ka.add_argument("--region")
     ka.add_argument("--entorno", default="lab")
+    sub.add_parser("asociar-huerfanas", help="reasigna la telemetria huerfana cuya clave ya esta en el catalogo")
     args = p.parse_args(argv)
+
+    if args.orden == "asociar-huerfanas":
+        from zenit.huerfanas import asociar_desde_entorno
+
+        if not os.environ.get("PG_URL"):
+            print("falta PG_URL", file=sys.stderr)
+            return 2
+        hechas = asociar_desde_entorno(os.environ["PG_URL"])
+        for clave, activo, n1, n2 in hechas:
+            print(f"{clave} -> {activo}: {n1} filas de metricas, {n2} de registros y trazas")
+        print("nada pendiente" if not hechas else f"{len(hechas)} origenes asociados")
+        return 0
 
     if args.orden == "migrar-pg":
         return migrar_pg(Path(args.carpeta), args.catalogo)

@@ -78,12 +78,13 @@ services:
     # Los 10 s por defecto de Docker no alcanzan si el almacen esta lento.
     stop_grace_period: 30s
     environment:
-      <<: *influx
       ZENIT_ENTORNO:   ${ZENIT_ENTORNO:-desconocido}
       ZENIT_PROVEEDOR: ${ZENIT_PROVEEDOR:-desconocido}
       ZENIT_REGION:    ${ZENIT_REGION:-desconocido}
-      RUTA_SALIDA:     /datos/salida   # trazas y registros, hasta la epica 1
-      RUTA_CATALOGO:   /etc/zenit/catalogo/catalogo.json
+      <<: [*influx, *pg]
+      RUTA_SALIDA:     /datos/salida   # verdad de referencia del laboratorio y rechazos
+      RUTA_CATALOGO:   /etc/zenit/catalogo/catalogo.json   # respaldo si PostgreSQL nunca respondio
+      CATALOGO_CADA_S: ${CATALOGO_CADA_S:-30}
       TOKEN_INGESTA:   ${TOKEN_INGESTA:?falta el token de ingesta}
       SERVICIO_POR_DEFECTO: ${SERVICIO_POR_DEFECTO:-host}
     volumes:
@@ -97,6 +98,8 @@ services:
     # 4317 NO se publica: solo lo alcanza el borde, por la red interna
     depends_on:
       influxdb-bases:
+        condition: service_completed_successfully
+      postgres-esquema:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c",
