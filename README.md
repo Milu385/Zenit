@@ -493,6 +493,7 @@ Los cuatro archivos de `laboratorio/entornos/` son idénticos salvo estas línea
 | `scripts/do/retirar.sh` | Ocasional | Quita una IP de un puerto (un nodo que cambió de IP) |
 | `scripts/do/userdata-docker.sh` | No se ejecuta a mano | Lo corre el droplet al nacer; sirve también para la VM del Proxmox |
 | `scripts/exportar.sh` | Diario | En la plataforma: datos del laboratorio para la evaluación |
+| `scripts/instantanea-nodo.sh` | Recurrente | Instantánea de configuración de un nodo para el reporte de configuraciones (ver `NOTAS.md`) |
 
 ---
 
@@ -707,6 +708,14 @@ INFLUX_URL=http://127.0.0.1:18181 INFLUX_TOKEN=apiv3_prueba RUTA_CATALOGO=../dep
 python pruebas/nodo_simulado.py --destino 127.0.0.1:14317 --relleno-min 20 --cada 2 --escalon-tras 60 &
 cd ../frontend && npm install && npm run dev       # http://localhost:5173
 ```
+
+La API pide sesión en todas las rutas salvo `/api/salud` y `/api/sesion`, y
+sin `PG_URL` no hay usuarios con los que entrar. Para la API real en local,
+levanta un PostgreSQL, aplica `deploy/postgres/01-esquema.sql` y
+`02-gobernanza.sql`, exporta `PG_URL` y crea un usuario con
+`python -m zenit.gobernanza.usuarios crear <usuario> <rol>`. Para trabajar
+solo en la interfaz, `npm run dev:simulado` sirve todas las rutas del
+contrato sin backend. Usuarios, escenarios y decisiones de diseño: `NOTAS.md`.
 
 El doble no verifica retención, persistencia ni rendimiento: eso se verifica
 contra el motor real en la plataforma, con los comandos de la sección de

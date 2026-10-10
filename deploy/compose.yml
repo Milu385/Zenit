@@ -115,8 +115,14 @@ services:
     environment:
       <<: [*influx, *pg]
       RUTA_CATALOGO: /etc/zenit/catalogo/catalogo.json
+      RUTA_POLITICA: /etc/zenit/gobernanza/politica.json
+      # firma las sesiones; sin el, cada reinicio de la API cierra todas
+      ZENIT_SECRETO_SESION: ${ZENIT_SECRETO_SESION:?falta ZENIT_SECRETO_SESION; openssl rand -hex 32}
+      # con el que los nodos envian su instantanea de configuracion
+      TOKEN_INSTANTANEAS: ${TOKEN_INSTANTANEAS:?falta TOKEN_INSTANTANEAS; openssl rand -hex 32}
     volumes:
       - ./catalogo:/etc/zenit/catalogo:ro
+      - ./gobernanza:/etc/zenit/gobernanza:ro
     # 8000 NO se publica: la API se alcanza por el borde en el 443
     depends_on:
       influxdb-bases:
@@ -131,7 +137,8 @@ services:
       retries: 5
       start_period: 10s
 
-  # Tablas compartidas: inyecciones, anomalias, diagnosticos y usuarios
+  # Tablas compartidas: inyecciones, anomalias, diagnosticos, usuarios y
+  # las de gobernanza (instantaneas, facturas, cargos)
   # (contrato de la API, seccion 4). Las crea deploy/postgres/01-esquema.sql
   # la primera vez que arranca con el volumen vacio.
   postgres:
