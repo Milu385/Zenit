@@ -31,6 +31,8 @@ p.write_text(json.dumps(d, indent=2))
 PY
 systemctl enable --now docker
 systemctl restart docker
+# El usuario administrador de la VM (zenit en Azure, ubuntu en AWS) usa docker sin sudo
+for u in zenit ubuntu; do id "$u" >/dev/null 2>&1 && usermod -aG docker "$u"; done
 
 # Swap de 2 GB: el primer build compila varias imagenes y con 2 o 4 GB de RAM
 # el OOM puede matar el build o a InfluxDB sin mensaje.

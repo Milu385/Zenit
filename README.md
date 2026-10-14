@@ -552,6 +552,37 @@ la misma ventana.
 
 ---
 
+## Plataforma y nodo en Azure
+
+Desde el 14 de octubre la plataforma corre en una VM de Azure (cuenta Azure for
+Students) y Azure es además un entorno observado, con su nodo y su
+descubrimiento (H-014, H-009d). El compose es el mismo; cambian el
+aprovisionamiento y tres variables del `.env`.
+
+```bash
+az login
+bash scripts/azure/00-verificar.sh        # regiones permitidas, tamanos y cuota; no crea nada
+bash scripts/azure/01-red.sh              # grupo, dos redes y sus NSG (22 solo a tu IP)
+bash scripts/azure/02-plataforma.sh       # VM de 8 GiB, IP estatica, identidad con rol Reader
+bash scripts/azure/03-nodo.sh             # zenit-nodo-azure, etiqueta zenit=nodo, admitido en el 4317
+bash scripts/azure/abrir-equipo.sh <ip> <nombre>
+```
+
+| | Plataforma | Nodo |
+|---|---|---|
+| Tamaño | `Standard_B2as_v2` (2 vCPU, 8 GiB) | `Standard_B2als_v2` (2 vCPU, 4 GiB) |
+| Disco | 64 GB SSD estándar | 30 GB SSD estándar |
+| Red | `zenit-plataforma-red` 10.70.0.0/16 | `zenit-nodo-red` 10.71.0.0/16 |
+| Entradas | 22 y 443 del equipo, 4317 de los nodos admitidos | 22 del equipo |
+| Identidad | Administrada, rol `Reader` sobre el grupo | Ninguna |
+
+Los NSG están fuera de la VM, igual que el cortafuegos de DigitalOcean, así
+que Docker no los puede saltar. En el `.env` de la plataforma:
+`ZENIT_PROVEEDOR=azure`, `DESCUBRIR_AZURE=1`, `AZURE_SUSCRIPCION` y
+`AZURE_GRUPO`. Detalle de la credencial y su demostración: `docs/proveedores.md`,
+sección 5. `scripts/azure/apagar.sh` desasigna las VM para no gastar crédito
+fuera de la campaña.
+
 ## Perfiles del nodo
 
 | Comando | Qué levanta |
@@ -600,6 +631,7 @@ Los cuatro archivos de `laboratorio/entornos/` son idénticos salvo estas línea
 | `scripts/do/abrir-equipo.sh` | Recurrente | Abre el 443 y el 22 a la IP de un integrante |
 | `scripts/do/retirar.sh` | Ocasional | Quita una IP de un puerto (un nodo que cambió de IP) |
 | `scripts/do/userdata-docker.sh` | No se ejecuta a mano | Lo corre el droplet al nacer; sirve también para la VM del Proxmox |
+| `scripts/azure/*.sh` | Una vez | Aprovisionamiento en Azure: verificar la suscripción, red, plataforma, nodo, admitir nodos y abrir el equipo |
 | `scripts/exportar.sh` | Diario | En la plataforma: datos del laboratorio para la evaluación |
 | `scripts/tls/emitir-cliente.sh <nodo>` | Recurrente | Certificado de cliente de un nodo (H-012). Exige `tls/ca.key` |
 | `scripts/influx/espacio.sh` | Ocasional | Espacio de cada base medido en disco, si `zenit.admin espacio` no responde |

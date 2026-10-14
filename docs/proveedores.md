@@ -1,6 +1,6 @@
-# Tres proveedores, tres formas de decir lo mismo
+# Cuatro proveedores, cuatro formas de decir lo mismo
 
-Versión 1 · 2026-10-09 · H-009b, H-009c, H-009e, H-013, H-014, H-015 · ADR-008, ADR-010, ADR-012
+Versión 2 · 2026-10-14 · H-009b a H-009e, H-013, H-014, H-015 · ADR-008, ADR-010, ADR-012
 
 Este documento cumple dos criterios a la vez. El de H-013 a H-015: la credencial
 de descubrimiento es de solo lectura y eso se puede demostrar. Y el de H-014 y
@@ -8,7 +8,7 @@ H-015: queda escrito en qué difieren los proveedores en descubrimiento,
 credenciales y facturación. Ese registro es la evidencia de primera mano de la
 fragmentación que la propuesta afirma, y se escribió mientras se construía.
 
-El código está en `backend/zenit/descubrimiento/`. Los tres módulos tienen la
+El código está en `backend/zenit/descubrimiento/`. Los cuatro módulos tienen la
 misma forma (`listar() -> list[Recurso]`) y ninguno escribe en el catálogo: eso
 lo hace `zenit.catalogo.reconciliar`, igual para todos.
 
@@ -16,26 +16,26 @@ lo hace `zenit.catalogo.reconciliar`, igual para todos.
 
 ## 1. La comparación
 
-| | DigitalOcean | Proxmox VE (on-premise) | AWS |
-|---|---|---|---|
-| **Qué se consulta** | `GET /v2/droplets?tag_name=zenit-nodo` | `GET /api2/json/cluster/resources?type=vm` | `ec2:DescribeInstances` con filtro `tag:zenit:rol=nodo` |
-| **Llamadas por pasada** | Una, más una por página de 200 | Una para todo el clúster | Una por región, más una por página |
-| **Paginación** | URL completa en `links.pages.next` | No hay | `NextToken` (el paginador de boto3) |
-| **Identificador nativo** | Número global del droplet (`droplet/412345678`) | `qemu/105` o `lxc/110`; el número se reutiliza si se borra la máquina | `i-0abc...`, único dentro de la cuenta y la región |
-| **Nombre** | Atributo propio del droplet | Atributo propio, sin obligación de ser único | No existe: es la etiqueta `Name`, opcional |
-| **Etiquetas** | Lista de textos | Un texto separado por `;` | Pares clave y valor |
-| **Agrupación** | Proyecto, plana | Nodo físico dentro del clúster; pools | Cuenta, región, VPC |
-| **Estados que no son "borrado"** | `off` | `stopped` | `stopped`; el laboratorio de AWS detiene las instancias al cerrar la sesión |
-| **Credencial de solo lectura** | Token con alcance de lectura | Token de API de un usuario con rol `PVEAuditor` | Rol o usuario IAM con `AmazonEC2ReadOnlyAccess`; **no disponible en Learner Lab** |
-| **Vida de la credencial** | La que se elija al crearla | La que se elija al crearla | Cuatro horas (sesión del laboratorio) |
-| **TLS de la API** | CA pública | CA propia del clúster (`/etc/pve/pve-root-ca.pem`) | CA pública, y cada petición firmada (SigV4) |
-| **Cómo la alcanza la plataforma** | Internet | No es alcanzable: está detrás del NAT de la red local | Internet |
-| **Facturación** | API de facturas (`/v2/customers/my/invoices`), con CSV por recurso; exige alcance de facturación | No hay: el costo es hardware propio y energía, se asigna a mano | Cost Explorer o el reporte de costo y uso (CUR) en S3; **Learner Lab no da acceso** |
+| | DigitalOcean | Proxmox VE (on-premise) | AWS | Azure |
+|---|---|---|---|---|
+| **Qué se consulta** | `GET /v2/droplets?tag_name=zenit-nodo` | `GET /api2/json/cluster/resources?type=vm` | `ec2:DescribeInstances` con filtro `tag:zenit:rol=nodo` | `GET .../resourceGroups/{g}/providers/Microsoft.Compute/virtualMachines`, filtrando la etiqueta `zenit=nodo` |
+| **Llamadas por pasada** | Una, más una por página de 200 | Una para todo el clúster | Una por región, más una por página | Una por grupo de recursos, más una por página |
+| **Paginación** | URL completa en `links.pages.next` | No hay | `NextToken` (el paginador de boto3) | URL completa en `nextLink` |
+| **Identificador nativo** | Número global del droplet (`droplet/412345678`) | `qemu/105` o `lxc/110`; el número se reutiliza si se borra la máquina | `i-0abc...`, único dentro de la cuenta y la región | `vmId`, un GUID que no cambia en la vida de la VM (`vm/<guid>`); el id de recurso es una ruta que cambia si la VM se mueve de grupo |
+| **Nombre** | Atributo propio del droplet | Atributo propio, sin obligación de ser único | No existe: es la etiqueta `Name`, opcional | Atributo propio, único dentro del grupo |
+| **Etiquetas** | Lista de textos | Un texto separado por `;` | Pares clave y valor | Pares clave y valor |
+| **Agrupación** | Proyecto, plana | Nodo físico dentro del clúster; pools | Cuenta, región, VPC | Suscripción, grupo de recursos, región |
+| **Estados que no son "borrado"** | `off` | `stopped` | `stopped`; el laboratorio de AWS detiene las instancias al cerrar la sesión | `deallocated` (apagada sin cobrar cómputo) |
+| **Credencial de solo lectura** | Token con alcance de lectura | Token de API de un usuario con rol `PVEAuditor` | Rol o usuario IAM con `AmazonEC2ReadOnlyAccess`; **no disponible en Learner Lab** | Identidad administrada de la VM de la plataforma con el rol `Reader` sobre el grupo; **sin secreto** |
+| **Vida de la credencial** | La que se elija al crearla | La que se elija al crearla | Cuatro horas (sesión del laboratorio) | El token lo renueva el servicio de metadatos de la VM (IMDS); dura unas horas |
+| **TLS de la API** | CA pública | CA propia del clúster (`/etc/pve/pve-root-ca.pem`) | CA pública, y cada petición firmada (SigV4) | CA pública, token OAuth de Entra ID |
+| **Cómo la alcanza la plataforma** | Internet | No es alcanzable: está detrás del NAT de la red local | Internet | Internet (Resource Manager); el token, por IMDS dentro de la VM |
+| **Facturación** | API de facturas (`/v2/customers/my/invoices`), con CSV por recurso; exige alcance de facturación | No hay: el costo es hardware propio y energía, se asigna a mano | Cost Explorer o el reporte de costo y uso (CUR) en S3; **Learner Lab no da acceso** | Cost Management (exportación a CSV); no implementado este semestre |
 
 Lo que la tabla dice en una línea: **el mismo hecho, "esta máquina existe y se
-llama así", se pide de tres maneras, se identifica de tres maneras y se protege
-de tres maneras.** Sin el catálogo canónico, cada consulta de Zenit tendría que
-saber de cuál de los tres viene el dato.
+llama así", se pide de cuatro maneras, se identifica de cuatro maneras y se protege
+de cuatro maneras.** Sin el catálogo canónico, cada consulta de Zenit tendría que
+saber de cuál de los cuatro viene el dato.
 
 Tres diferencias que costaron trabajo y que vale la pena contar en la sustentación:
 
@@ -198,18 +198,46 @@ pasada queda en `error` y no retira nada.
 
 ---
 
-## 5. Azure: desviación
+## 5. Azure
 
-El ADR-012 compromete cuatro entornos observados. En este semestre **no se
-implementa Azure**: ni el nodo (H-014) ni su descubrimiento (H-009d). Se declara
-como desviación en el informe final, por decisión del equipo del 9 de octubre.
+**Qué descubre.** Las VM del grupo de recursos `zenit` con la etiqueta
+`zenit=nodo`, que pone `scripts/azure/03-nodo.sh`. La VM de la plataforma lleva
+`zenit=plataforma` y no aparece. Código: `descubrimiento/azure.py`.
 
-Lo que haría falta, para que quede escrito: una entidad de servicio con los
-roles `Reader` y `Monitoring Reader` sobre el grupo de recursos (ADR-010), una
-consulta a Resource Graph o a `Microsoft.Compute/virtualMachines` por
-suscripción y grupo de recursos (un cuarto modelo de identidad: el id del
-recurso es una ruta completa), y un módulo `descubrimiento/azure.py` con la
-misma forma que los otros tres. Nada del catálogo ni de la ingesta cambia.
+**Credencial.** Ninguna que guardar. `scripts/azure/02-plataforma.sh` crea la VM
+de la plataforma con una identidad administrada y le asigna el rol `Reader`
+sobre el grupo. El descubridor pide el token al servicio de metadatos de la VM
+(`169.254.169.254`, IMDS), que solo responde dentro de esa VM. Es el único de
+los cuatro proveedores donde la credencial no existe como texto: no se puede
+filtrar ni versionar por error.
 
-El carácter híbrido del proyecto no depende de Azure: lo sostiene el entorno
-on-premise (ADR-012, precisión del 18 de septiembre).
+**Configuración** en `deploy/.env`: `DESCUBRIR_AZURE=1`, `AZURE_SUSCRIPCION` y
+`AZURE_GRUPO` (los imprime `02-plataforma.sh`).
+
+**Demostración de solo lectura** (H-014, criterio 1), desde la VM de la plataforma:
+
+```bash
+TOKEN=$(curl -s -H Metadata:true "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/" | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+S=<suscripcion>; G=zenit
+# leer: 200
+curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $TOKEN" \
+  "https://management.azure.com/subscriptions/$S/resourceGroups/$G/providers/Microsoft.Compute/virtualMachines?api-version=2024-07-01"
+# escribir una etiqueta en el grupo: 403 AuthorizationFailed
+curl -s -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"tags":{"prueba":"escritura"}}' \
+  "https://management.azure.com/subscriptions/$S/resourcegroups/$G?api-version=2021-04-01"
+# {"error":{"code":"AuthorizationFailed", ...}}
+```
+
+En el portal, el rol se ve en el grupo de recursos, Control de acceso (IAM),
+Asignaciones de roles: `zenit-plataforma`, `Reader`.
+
+**Lo que difiere de los otros tres.** La identidad es jerárquica (suscripción,
+grupo, recurso) y el identificador visible es una ruta, así que se guarda el
+`vmId`, que es el único que no cambia. Una VM desasignada sigue listándose: no
+es un retiro. Y la cuenta Azure for Students restringe regiones y tamaños por
+política (`scripts/azure/00-verificar.sh` los consulta antes de crear nada).
+
+**Facturación.** No se implementa este semestre: la importación de costos lee el
+CSV de DigitalOcean. Azure exporta el suyo desde Cost Management; agregarlo es
+un segundo lector en `zenit/gobernanza/costos.py`.

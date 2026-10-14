@@ -26,3 +26,6 @@ exportaciones/
 # mTLS (H-012): certificados y claves de cliente de los agentes
 tls/clientes/
 laboratorio/agente/cliente/
+
+# paquetes de Python descargados por error
+*.whl
