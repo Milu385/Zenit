@@ -49,6 +49,12 @@ def proveedores_desde_entorno(entorno=os.environ) -> list:
 
         activos.append(AWS(entorno.get("AWS_REGION") or entorno.get("AWS_DEFAULT_REGION") or "us-east-1",
                            entorno=etiqueta_entorno))
+    if entorno.get("DESCUBRIR_AZURE", "").lower() in ("1", "true", "si"):
+        from .azure import Azure
+
+        activos.append(Azure(entorno.get("AZURE_SUSCRIPCION", ""), entorno.get("AZURE_GRUPO", ""),
+                             etiqueta=entorno.get("AZURE_ETIQUETA", "zenit"),
+                             valor=entorno.get("AZURE_VALOR_ETIQUETA", "nodo"), entorno=etiqueta_entorno))
     return activos
 
 

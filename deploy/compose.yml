@@ -221,6 +221,11 @@ services:
       DESCUBRIR_AWS: ${DESCUBRIR_AWS:-0}
       AWS_REGION: ${AWS_REGION:-us-east-1}
       AWS_SHARED_CREDENTIALS_FILE: /run/zenit/descubrimiento/aws-credenciales
+      # Azure: la identidad administrada de la VM de la plataforma, con rol Reader
+      # sobre el grupo de recursos (docs/proveedores.md). Sin secretos.
+      DESCUBRIR_AZURE: ${DESCUBRIR_AZURE:-0}
+      AZURE_SUSCRIPCION: ${AZURE_SUSCRIPCION:-}
+      AZURE_GRUPO: ${AZURE_GRUPO:-}
     volumes:
       - ./secretos/descubrimiento:/run/zenit/descubrimiento:ro
     # Si la API del Proxmox llega por un tunel SSH al anfitrion

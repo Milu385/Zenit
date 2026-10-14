@@ -60,7 +60,7 @@ def principal(argv=None) -> int:
     proveedores = [x for x in proveedores_desde_entorno()
                    if not args.proveedor or x.nombre in args.proveedor]
     if not proveedores:
-        print("ningun proveedor configurado: DO_TOKEN, PROXMOX_URL y PROXMOX_TOKEN, o DESCUBRIR_AWS=1",
+        print("ningun proveedor configurado: DO_TOKEN, PROXMOX_URL y PROXMOX_TOKEN, DESCUBRIR_AWS=1 o DESCUBRIR_AZURE=1",
               file=sys.stderr)
         return 2 if not args.cada else _esperar_para_siempre()
 

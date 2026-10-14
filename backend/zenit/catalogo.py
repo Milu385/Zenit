@@ -41,8 +41,8 @@ PREFIJOS = {"digitalocean": "do", "proxmox": "onprem", "aws": "aws", "azure": "a
 class Recurso:
     """Un recurso tal como lo lista un proveedor, ya en forma comun."""
 
-    proveedor: str              # digitalocean | proxmox | aws
-    id_nativo: str              # droplet/412345678, qemu/105, instancia/i-0abc
+    proveedor: str              # digitalocean | proxmox | aws | azure
+    id_nativo: str              # droplet/412345678, qemu/105, instancia/i-0abc, vm/<guid>
     nombre: str                 # nombre del recurso; en el laboratorio coincide con ZENIT_NODO
     region: Optional[str] = None
     entorno: Optional[str] = None

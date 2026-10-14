@@ -17,6 +17,7 @@ from zenit.catalogo import Recurso
 from zenit.descubrimiento import proveedores_desde_entorno
 from zenit.descubrimiento.__main__ import pasada
 from zenit.descubrimiento.aws import AWS
+from zenit.descubrimiento.azure import Azure
 from zenit.descubrimiento.digitalocean import DigitalOcean
 from zenit.descubrimiento.proxmox import Proxmox
 
@@ -127,6 +128,58 @@ def test_solo_se_activan_los_proveedores_con_credencial():
     nombres = [p.nombre for p in proveedores_desde_entorno({
         "DO_TOKEN": "t", "PROXMOX_URL": "https://pve:8006", "PROXMOX_TOKEN": "u@pve!t=s", "DESCUBRIR_AWS": "1"})]
     assert nombres == ["digitalocean", "proxmox", "aws"]
+    con_azure = proveedores_desde_entorno({"DESCUBRIR_AZURE": "1", "AZURE_SUSCRIPCION": "s", "AZURE_GRUPO": "g"})
+    assert [p.nombre for p in con_azure] == ["azure"]
+
+
+def _vm(nombre, vm_id, etiquetas):
+    return {"id": f"/subscriptions/s/resourceGroups/zenit/providers/Microsoft.Compute/virtualMachines/{nombre}",
+            "name": nombre, "location": "eastus", "tags": etiquetas,
+            "properties": {"vmId": vm_id, "hardwareProfile": {"vmSize": "Standard_B2als_v2"}}}
+
+
+def test_azure_usa_la_identidad_administrada_filtra_la_etiqueta_y_pagina():
+    vistas = []
+
+    def imds(peticion):
+        assert peticion.headers["Metadata"] == "true"
+        assert peticion.url.params["resource"] == "https://management.azure.com/"
+        return httpx.Response(200, json={"access_token": "tok-lectura", "expires_on": "9999999999"})
+
+    def arm(peticion):
+        vistas.append(str(peticion.url))
+        assert peticion.headers["Authorization"] == "Bearer tok-lectura"
+        assert peticion.method == "GET"
+        if "pagina2" in str(peticion.url):
+            return httpx.Response(200, json={"value": [_vm("zenit-nodo-azure-2", "guid-2", {"zenit": "nodo"})]})
+        return httpx.Response(200, json={
+            "value": [_vm("zenit-nodo-azure", "guid-1", {"zenit": "nodo"}),
+                      _vm("zenit-plataforma", "guid-p", {"zenit": "plataforma"})],
+            "nextLink": "https://management.azure.com/siguiente?pagina2=1&api-version=2024-07-01"})
+
+    az = Azure("s", "zenit",
+               http=httpx.Client(base_url="https://management.azure.com", transport=httpx.MockTransport(arm)),
+               imds=httpx.Client(transport=httpx.MockTransport(imds)))
+    recursos = az.listar()
+    assert [(r.clave, r.nombre, r.region) for r in recursos] == [
+        ("azure:vm/guid-1", "zenit-nodo-azure", "eastus"), ("azure:vm/guid-2", "zenit-nodo-azure-2", "eastus")]
+    assert "/resourceGroups/zenit/providers/Microsoft.Compute/virtualMachines" in vistas[0]
+    assert len(vistas) == 2
+
+
+def test_azure_sin_identidad_administrada_falla_con_un_mensaje_claro():
+    az = Azure("s", "zenit", http=httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200))),
+               imds=httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(400))))
+    with pytest.raises(RuntimeError, match="identidad administrada"):
+        az.listar()
+
+
+def test_azure_sin_permiso_no_devuelve_una_lista_parcial():
+    az = Azure("s", "zenit", token="t",
+               http=httpx.Client(base_url="https://management.azure.com",
+                                 transport=httpx.MockTransport(lambda _: httpx.Response(403))))
+    with pytest.raises(httpx.HTTPStatusError):
+        az.listar()
 
 
 # ------------------------------------------------------------------ catalogo
