@@ -20,6 +20,8 @@ export type Permiso =
   | "costos:ver"
   | "laboratorio:ver"
   | "usuarios:gestionar"
+  | "registros:ver" // (1.2)
+  | "fuentes:ver" // (1.2)
   | "configuraciones:enviar" // FUERA DEL CONTRATO
   | "costos:importar"; // FUERA DEL CONTRATO
 

@@ -20,6 +20,9 @@ const MATRIZ: Record<Permiso, Rol[]> = {
   "costos:ver": ["administrador", "finanzas"],
   "laboratorio:ver": ["administrador"],
   "usuarios:gestionar": ["administrador"],
+  // (1.2)
+  "registros:ver": ["administrador", "operador", "seguridad"],
+  "fuentes:ver": ["administrador"],
   // fuera de la tabla del contrato (NOTAS.md)
   "configuraciones:enviar": ["administrador"],
   "costos:importar": ["administrador", "finanzas"],

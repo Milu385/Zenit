@@ -130,6 +130,9 @@ def test_solo_se_activan_los_proveedores_con_credencial():
     assert nombres == ["digitalocean", "proxmox", "aws"]
     con_azure = proveedores_desde_entorno({"DESCUBRIR_AZURE": "1", "AZURE_SUSCRIPCION": "s", "AZURE_GRUPO": "g"})
     assert [p.nombre for p in con_azure] == ["azure"]
+    # mal configurado no tumba a los demas proveedores
+    sin_grupo = proveedores_desde_entorno({"DESCUBRIR_AZURE": "1", "AZURE_SUSCRIPCION": "s", "DO_TOKEN": "t"})
+    assert [p.nombre for p in sin_grupo] == ["digitalocean"]
 
 
 def _vm(nombre, vm_id, etiquetas):

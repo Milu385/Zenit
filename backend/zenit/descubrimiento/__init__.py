@@ -52,9 +52,13 @@ def proveedores_desde_entorno(entorno=os.environ) -> list:
     if entorno.get("DESCUBRIR_AZURE", "").lower() in ("1", "true", "si"):
         from .azure import Azure
 
-        activos.append(Azure(entorno.get("AZURE_SUSCRIPCION", ""), entorno.get("AZURE_GRUPO", ""),
-                             etiqueta=entorno.get("AZURE_ETIQUETA", "zenit"),
-                             valor=entorno.get("AZURE_VALOR_ETIQUETA", "nodo"), entorno=etiqueta_entorno))
+        if entorno.get("AZURE_SUSCRIPCION") and entorno.get("AZURE_GRUPO"):
+            activos.append(Azure(entorno["AZURE_SUSCRIPCION"], entorno["AZURE_GRUPO"],
+                                 etiqueta=entorno.get("AZURE_ETIQUETA", "zenit"),
+                                 valor=entorno.get("AZURE_VALOR_ETIQUETA", "nodo"), entorno=etiqueta_entorno))
+        else:
+            # sin esto el descubridor no arrancaria y se llevaria a los otros proveedores
+            log.error("DESCUBRIR_AZURE=1 sin AZURE_SUSCRIPCION o AZURE_GRUPO: Azure no se descubre")
     return activos
 
 
