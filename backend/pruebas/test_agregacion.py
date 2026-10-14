@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from sesion_prueba import con_sesion, opciones
 import falso_influx
 from conftest import preparar_pg
 from zenit.agregacion import Agregador
@@ -165,13 +166,12 @@ def test_rango_largo_se_parte_en_tramos_que_no_tocan_demasiados_archivos(entorno
 
 @con_pg
 def test_api_de_series_declara_la_resolucion(entorno):
-    from fastapi.testclient import TestClient
-
+    
     from zenit.api.main import crear_app
 
     cliente, _, _ = entorno
     _agregar(cliente)
-    api = TestClient(crear_app(RepositorioInflux(cliente, "zenit_raw", cache_s=0), "/no/existe.json"))
+    api = con_sesion(crear_app(RepositorioInflux(cliente, "zenit_raw", cache_s=0), "/no/existe.json", **opciones()), "administrador")
     q = {"desde": (FIN - timedelta(days=7)).isoformat(), "hasta": FIN.isoformat()}
     r = api.get(f"/api/activos/{ACTIVO}/series/system_cpu_utilization", params=q).json()
     assert (r["resolucion"], r["intervalo_s"]) == ("1m", 600)

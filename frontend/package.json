@@ -1,10 +1,11 @@
 {
   "name": "zenit-interfaz",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:simulado": "vite --mode simulado",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },
@@ -14,6 +15,7 @@
     "uplot": "^1.6.32"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.7.0",

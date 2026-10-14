@@ -15,7 +15,6 @@ from pathlib import Path
 
 import grpc
 import pytest
-from fastapi.testclient import TestClient
 from opentelemetry.proto.collector.logs.v1 import logs_service_pb2, logs_service_pb2_grpc
 from opentelemetry.proto.collector.trace.v1 import trace_service_pb2, trace_service_pb2_grpc
 from opentelemetry.proto.common.v1 import common_pb2
@@ -25,6 +24,7 @@ from opentelemetry.proto.trace.v1 import trace_pb2
 import otlp
 from destinos import DestinoPorLotes
 from servidor import Catalogo, PuntoDeEntrada, servidor_grpc
+from sesion_prueba import con_sesion, opciones
 from zenit.api.main import crear_app
 from zenit.clickhouse import ClienteClickHouse
 from zenit.repositorio.analitico import RepositorioAnalitico
@@ -39,7 +39,8 @@ TRAZA = "0af7651916cd43dd8448eb211c80319c"
 @pytest.fixture
 def ch():
     cliente = ClienteClickHouse(CH, os.environ.get("ZENIT_CH_USUARIO", "default"), "")
-    cliente.ejecutar("DROP DATABASE IF EXISTS zenit SYNC")
+    # desde la base default: en un ClickHouse recien creado la base zenit no existe todavia
+    cliente._enviar("DROP DATABASE IF EXISTS zenit SYNC", base="default")
     cliente.aplicar_esquema(ESQUEMA.read_text())
     yield cliente
     cliente.cerrar()
@@ -270,7 +271,7 @@ def test_api_de_registros_trazas_y_correlacion(ch):
         def disponible(self):
             return True
 
-    api = TestClient(crear_app(RepoQuieto(), "/no/existe.json", analitico=RepositorioAnalitico(ch)))
+    api = con_sesion(crear_app(RepoQuieto(), "/no/existe.json", analitico=RepositorioAnalitico(ch), **opciones()), "administrador")
     q = {"desde": (ahora - timedelta(hours=1)).isoformat(), "hasta": ahora.isoformat()}
     assert len(api.get("/api/activos/activo-do-nodo-01/registros", params=q).json()["registros"]) == 2
     assert api.get("/api/activos/activo-do-nodo-01/trazas", params={**q, "solo_errores": True}).json()["trazas"][0][
@@ -280,7 +281,7 @@ def test_api_de_registros_trazas_y_correlacion(ch):
     c = api.get("/api/activos/activo-do-nodo-01/correlacion", params=q).json()
     assert c["resumen"]["spans_error"] == 1 and len(c["registros"]) == 2
     assert api.get("/api/salud").json()["analitico"] is True
-    sin = TestClient(crear_app(RepoQuieto(), "/no/existe.json"))
+    sin = con_sesion(crear_app(RepoQuieto(), "/no/existe.json", **opciones()), "administrador")
     assert sin.get("/api/activos/a/registros").status_code == 503
 
 

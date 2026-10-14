@@ -62,7 +62,7 @@ services:
   # Una sola vez por arranque: crea las tres bases con su retencion. Es
   # idempotente, asi que repetirlo no hace dano.
   influxdb-bases:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
@@ -79,7 +79,7 @@ services:
         condition: service_healthy
 
   ingesta:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-ingesta:${VERSION_INGESTA:-0.4.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-ingesta:${VERSION_INGESTA:-0.5.0}
     build:
       context: ../backend              # incluye el paquete compartido zenit/
       dockerfile: ingesta/Dockerfile
@@ -162,7 +162,7 @@ services:
   # Una sola vez por arranque: crea o completa las tablas de registros y
   # trazas desde deploy/clickhouse/*.sql. Idempotente.
   clickhouse-esquema:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
@@ -181,7 +181,7 @@ services:
   # epica, en una base que ya existia) e importa catalogo.json conservando los
   # ids. Idempotente, como influxdb-bases.
   postgres-esquema:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
@@ -203,7 +203,7 @@ services:
   # archivos (credenciales de la sesion de AWS, CA del Proxmox) van en
   # deploy/secretos/descubrimiento/, que no se versiona.
   descubridor:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
@@ -236,7 +236,7 @@ services:
   # Resumenes por minuto y por hora (H-018), cada 60 s. La primera vez
   # rellena hacia atras lo que retiene zenit_raw, por tramos.
   agregador:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
@@ -252,7 +252,7 @@ services:
         condition: service_completed_successfully
 
   api:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
@@ -260,8 +260,14 @@ services:
     environment:
       <<: [*influx, *pg, *ch]
       RUTA_CATALOGO: /etc/zenit/catalogo/catalogo.json
+      RUTA_POLITICA: /etc/zenit/gobernanza/politica.json
+      # firma las sesiones; sin el, cada reinicio de la API cierra todas
+      ZENIT_SECRETO_SESION: ${ZENIT_SECRETO_SESION:?falta ZENIT_SECRETO_SESION; openssl rand -hex 32}
+      # con el que los nodos envian su instantanea de configuracion
+      TOKEN_INSTANTANEAS: ${TOKEN_INSTANTANEAS:?falta TOKEN_INSTANTANEAS; openssl rand -hex 32}
     volumes:
       - ./catalogo:/etc/zenit/catalogo:ro
+      - ./gobernanza:/etc/zenit/gobernanza:ro
     # 8000 NO se publica: la API se alcanza por el borde en el 443
     depends_on:
       influxdb-bases:
@@ -278,7 +284,8 @@ services:
       retries: 5
       start_period: 10s
 
-  # Tablas compartidas: inyecciones, anomalias, diagnosticos y usuarios
+  # Tablas compartidas: inyecciones, anomalias, diagnosticos, usuarios y
+  # las de gobernanza (instantaneas, facturas, cargos)
   # (contrato de la API, seccion 4). Las crea deploy/postgres/01-esquema.sql
   # la primera vez que arranca con el volumen vacio.
   postgres:
@@ -302,7 +309,7 @@ services:
   # Verdad de referencia del laboratorio: lee los registros que la ingesta
   # guardo y los deja en la tabla inyecciones, una vez por minuto (H-024).
   cargador:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.4.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
@@ -318,7 +325,7 @@ services:
         condition: service_healthy
 
   web:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-web:${VERSION_WEB:-0.2.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-web:${VERSION_WEB:-0.3.0}
     build: ../frontend
     restart: unless-stopped
     healthcheck:

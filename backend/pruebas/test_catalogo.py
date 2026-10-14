@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from conftest import preparar_pg
+from sesion_prueba import con_sesion, opciones
 from zenit import catalogo
 from zenit.catalogo import Recurso
 from zenit.descubrimiento import proveedores_desde_entorno
@@ -272,8 +273,7 @@ def test_catalogo_pg_que_nunca_respondio_usa_el_archivo():
 # ------------------------------------------------------------------ API
 @con_pg
 def test_api_lista_activos_y_la_ultima_ejecucion(pg, tmp_path):
-    from fastapi.testclient import TestClient
-
+    
     from zenit.api.main import crear_app
 
     catalogo.reconciliar(pg, "digitalocean", [Recurso("digitalocean", "droplet/1", "zenit-nodo-do", "nyc3", "lab")])
@@ -289,7 +289,7 @@ def test_api_lista_activos_y_la_ultima_ejecucion(pg, tmp_path):
         def volumen_fuentes(self):
             return {}
 
-    cliente = TestClient(crear_app(RepoQuieto(), tmp_path / "no-existe.json", pg_url=PG))
+    cliente = con_sesion(crear_app(RepoQuieto(), tmp_path / "no-existe.json", pg_url=PG, **opciones()), "administrador")
     (a,) = cliente.get("/api/activos").json()
     assert a["id"] == "activo-do-zenit-nodo-do" and a["proveedor"] == "digitalocean"
     assert a["claves"] == ["zenit-nodo-do"] and a["ids_nativos"] == ["digitalocean:droplet/1"]

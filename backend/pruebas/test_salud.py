@@ -4,8 +4,8 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi.testclient import TestClient
 
+from sesion_prueba import con_sesion, opciones
 import falso_influx
 import otlp
 from conftest import preparar_pg
@@ -121,7 +121,7 @@ def _api(pg, influx, ahora):
                                                        "primera": ahora, "ultima": ahora},
     })
     repo = RepositorioInflux(cliente, "zenit_raw", cache_s=0)
-    return TestClient(crear_app(repo, "/no/existe.json", pg_url=PG))
+    return con_sesion(crear_app(repo, "/no/existe.json", pg_url=PG, **opciones()), "administrador")
 
 
 @con_pg
@@ -170,6 +170,6 @@ def test_crear_bases_incluye_la_interna(influx):
 def test_sin_postgres_el_inventario_responde_503_y_la_serie_se_sirve_sin_aviso(influx):
     _, url = influx
     repo = RepositorioInflux(ClienteInflux(url, "apiv3_prueba"), "zenit_raw", cache_s=0)
-    api = TestClient(crear_app(repo, "/no/existe.json", pg_url="postgresql://nadie@127.0.0.1:1/nada"))
+    api = con_sesion(crear_app(repo, "/no/existe.json", pg_url="postgresql://nadie@127.0.0.1:1/nada", **opciones()), "administrador")
     assert api.get("/api/fuentes").status_code == 503
     assert api.get("/api/activos").status_code == 503

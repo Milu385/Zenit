@@ -6,11 +6,11 @@ import time
 from datetime import datetime, timezone
 
 import pytest
-from fastapi.testclient import TestClient
 
 import otlp
 from conftest import preparar_pg
 from test_ingesta import armar, enviar, esperar_reposo, filas, influx  # noqa: F401 (fixture)
+from sesion_prueba import con_sesion, opciones
 from zenit import catalogo, huerfanas
 from zenit.api.main import crear_app
 from zenit.catalogo import AcumuladorHuerfanas, CatalogoPG
@@ -118,7 +118,7 @@ def test_api_lista_huerfanas(pg, tmp_path):
         def volumen_fuentes(self):
             return {}
 
-    cliente = TestClient(crear_app(RepoQuieto(), tmp_path / "x.json", pg_url=PG))
+    cliente = con_sesion(crear_app(RepoQuieto(), tmp_path / "x.json", pg_url=PG, **opciones()), "administrador")
     (h,) = cliente.get("/api/fuentes/huerfanas").json()
     assert h["clave"] == "zenit-nodo-do" and h["metricas"] == 120 and h["resuelve_a"] is None
 
