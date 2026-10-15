@@ -1,0 +1,32 @@
+<!-- ClickHouse en una plataforma de 8 GB que comparte con InfluxDB,
+     PostgreSQL, la ingesta y la API. Lo que se toca es memoria y disco de las
+     tablas de sistema; los datos de Zenit no dependen de nada de esto. -->
+<clickhouse>
+    <!-- techo de memoria del servidor; ademas el compose limita el contenedor -->
+    <max_server_memory_usage>1610612736</max_server_memory_usage>
+    <mark_cache_size>268435456</mark_cache_size>
+    <logger>
+        <level>warning</level>
+        <size>50M</size>
+        <count>3</count>
+    </logger>
+    <!-- registros internos del motor: por defecto crecen sin limite -->
+    <query_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </query_log>
+    <trace_log remove="1"/>
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <text_log remove="1"/>
+    <part_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <query_views_log remove="1"/>
+    <session_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+    <asynchronous_insert_log remove="1"/>
+    <backup_log remove="1"/>
+    <s3queue_log remove="1"/>
+    <blob_storage_log remove="1"/>
+    <error_log remove="1"/>
+</clickhouse>

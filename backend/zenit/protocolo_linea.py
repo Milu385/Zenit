@@ -99,3 +99,29 @@ def construir_linea(
         )
     partes.append(f" {escapar_clave_o_valor(campo)}={texto_valor} {int(tiempo_ns)}")
     return "".join(partes)
+
+
+def construir_linea_campos(
+    medicion: str,
+    etiquetas: Mapping[str, str],
+    campos: Mapping[str, float],
+    tiempo_ns: int,
+) -> Optional[str]:
+    """Como construir_linea, con varios campos (los resumenes de H-018:
+    value_avg, value_min, value_max y value_count). Todos flotantes, por la
+    regla 4. Un campo NaN o ausente se omite; sin ningun campo valido, None."""
+    textos = []
+    for clave in sorted(campos):
+        if campos[clave] is None:
+            continue
+        texto = formatear_flotante(campos[clave])
+        if texto is not None:
+            textos.append(f"{escapar_clave_o_valor(clave)}={texto}")
+    if not textos:
+        return None
+    base = construir_linea(medicion, etiquetas, 0.0, tiempo_ns)
+    if base is None:
+        return None
+    # se reutiliza el escape de medicion y etiquetas; se cambian los campos
+    cabeza = base[: base.rindex(" value=")]
+    return f"{cabeza} {','.join(textos)} {int(tiempo_ns)}"

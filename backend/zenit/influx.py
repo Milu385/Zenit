@@ -17,12 +17,20 @@ from typing import Any, Mapping, Optional
 import httpx
 
 
-class ErrorInflux(Exception):
-    """El motor respondio con error o no respondio."""
+class ErrorAlmacen(Exception):
+    """Un almacen (InfluxDB o ClickHouse) respondio con error o no respondio.
+
+    `estado` sigue la convencion HTTP: None si no hubo respuesta, 400 si lo
+    enviado es invalido, 5xx si fallo el servidor. Es lo que usa el destino por
+    lotes de la ingesta para decidir si reintenta o rechaza."""
 
     def __init__(self, mensaje: str, estado: Optional[int] = None):
         super().__init__(mensaje)
         self.estado = estado
+
+
+class ErrorInflux(ErrorAlmacen):
+    """El motor de series respondio con error o no respondio."""
 
 
 class ClienteInflux:

@@ -2,7 +2,7 @@
 # Valores por defecto de DigitalOcean. Se pueden cambiar con variables de entorno.
 REGION="${REGION:-nyc3}"
 IMAGEN="${IMAGEN:-ubuntu-24-04-x64}"
-TAMANO_PLATAFORMA="${TAMANO_PLATAFORMA:-s-2vcpu-4gb}"
+TAMANO_PLATAFORMA="${TAMANO_PLATAFORMA:-s-4vcpu-8gb}"   # epica 1: ClickHouse; 4 GB no alcanza
 TAMANO_NODO="${TAMANO_NODO:-s-1vcpu-2gb}"
 FW_PLATAFORMA="zenit-plataforma"
 FW_NODO="zenit-nodo"

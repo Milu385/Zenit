@@ -1,12 +1,16 @@
 name: zenit-plataforma
 
-# Epica 0 completa (borde, punto de entrada, almacen de series, API e interfaz)
-# y, desde la epica 2, PostgreSQL con el cargador de la verdad de referencia.
+# Epica 0 (borde, punto de entrada, almacen de series, API e interfaz), epica 2
+# (PostgreSQL y el cargador de la verdad de referencia) y epica 1 (catalogo,
+# descubrimiento, agregacion, ClickHouse y mTLS).
 #
-#   internet ──4317 (OTLP, TLS)──▶ borde ──▶ ingesta ──▶ influxdb
-#                                              └─▶ registros ──▶ cargador ──▶ postgres
-#   equipo   ──443 (HTTPS)──────▶ borde ──▶ api ──────▶ influxdb, postgres
-#                                       └─▶ web
+#   nodos ──4317 (OTLP, mTLS)──▶ borde ──▶ ingesta ──▶ influxdb (metricas)
+#                                            ├──────▶ clickhouse (registros y trazas)
+#                                            └─▶ verdad ──▶ cargador ──▶ postgres
+#   equipo ──443 (HTTPS)───────▶ borde ──▶ api ──▶ influxdb, clickhouse, postgres
+#                                     └─▶ web
+#   descubridor ──▶ APIs de los proveedores (solo lectura) ──▶ postgres
+#   agregador   ──▶ influxdb (crudo ▶ 1m ▶ 1h)
 #
 # Solo el borde publica puertos. El grupo de seguridad limita el 4317 a las IP
 # de los nodos (admitir-nodo.sh) y el 443 a las del equipo (abrir-interfaz.sh).
@@ -18,6 +22,11 @@ x-influx: &influx
 
 x-pg: &pg
   PG_URL: postgresql://zenit:${PG_CLAVE:?falta PG_CLAVE; openssl rand -hex 24}@postgres:5432/zenit
+
+x-ch: &ch
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USUARIO: zenit
+  CLICKHOUSE_CLAVE: ${CH_CLAVE:?falta CH_CLAVE; openssl rand -hex 24}
 
 services:
 
@@ -53,7 +62,7 @@ services:
   # Una sola vez por arranque: crea las tres bases con su retencion. Es
   # idempotente, asi que repetirlo no hace dano.
   influxdb-bases:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.3.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
@@ -64,12 +73,13 @@ services:
       RETENCION_RAW: ${RETENCION_RAW:-30d}
       RETENCION_1M: ${RETENCION_1M:-30d}
       RETENCION_1H: ${RETENCION_1H:-180d}
+      RETENCION_INTERNA: ${RETENCION_INTERNA:-7d}
     depends_on:
       influxdb:
         condition: service_healthy
 
   ingesta:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-ingesta:${VERSION_INGESTA:-0.3.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-ingesta:${VERSION_INGESTA:-0.5.0}
     build:
       context: ../backend              # incluye el paquete compartido zenit/
       dockerfile: ingesta/Dockerfile
@@ -78,12 +88,20 @@ services:
     # Los 10 s por defecto de Docker no alcanzan si el almacen esta lento.
     stop_grace_period: 30s
     environment:
-      <<: *influx
       ZENIT_ENTORNO:   ${ZENIT_ENTORNO:-desconocido}
       ZENIT_PROVEEDOR: ${ZENIT_PROVEEDOR:-desconocido}
       ZENIT_REGION:    ${ZENIT_REGION:-desconocido}
-      RUTA_SALIDA:     /datos/salida   # trazas y registros, hasta la epica 1
-      RUTA_CATALOGO:   /etc/zenit/catalogo/catalogo.json
+      <<: [*influx, *pg, *ch]
+      RUTA_SALIDA:     /datos/salida   # verdad de referencia del laboratorio y rechazos
+      RUTA_CATALOGO:   /etc/zenit/catalogo/catalogo.json   # respaldo si PostgreSQL nunca respondio
+      CATALOGO_CADA_S: ${CATALOGO_CADA_S:-30}
+      # H-031: lotes y colas configurables. Las colas estan dimensionadas para
+      # caber, llenas, dentro del limite de memoria de abajo.
+      LINEAS_POR_LOTE: ${LINEAS_POR_LOTE:-5000}
+      CAPACIDAD_LINEAS: ${CAPACIDAD_LINEAS:-200000}
+      FILAS_POR_LOTE_ANALITICO: ${FILAS_POR_LOTE_ANALITICO:-5000}
+      CAPACIDAD_FILAS_ANALITICO: ${CAPACIDAD_FILAS_ANALITICO:-100000}
+      LIMITE_MEMORIA_INGESTA: ${LIMITE_MEMORIA_INGESTA:-768m}
       TOKEN_INGESTA:   ${TOKEN_INGESTA:?falta el token de ingesta}
       SERVICIO_POR_DEFECTO: ${SERVICIO_POR_DEFECTO:-host}
     volumes:
@@ -92,11 +110,21 @@ services:
       # ve los cambios cuando el editor reemplaza el archivo, y el catalogo
       # se relee en caliente.
       - ./catalogo:/etc/zenit/catalogo:ro
+    # H-031: limite de memoria declarado. Si la cola se llena, la ingesta
+    # responde UNAVAILABLE en vez de crecer; el limite es la red de seguridad.
+    deploy:
+      resources:
+        limits:
+          memory: ${LIMITE_MEMORIA_INGESTA:-768m}
     ports:
       - "127.0.0.1:8080:8080"         # salud y contadores: solo desde dentro
     # 4317 NO se publica: solo lo alcanza el borde, por la red interna
     depends_on:
       influxdb-bases:
+        condition: service_completed_successfully
+      postgres-esquema:
+        condition: service_completed_successfully
+      clickhouse-esquema:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c",
@@ -106,23 +134,153 @@ services:
       retries: 5
       start_period: 15s
 
+  # Registros y trazas (H-016, H-017, ADR-007). Un solo motor analitico; la
+  # ingesta escribe en el por lotes. 8123 NO se publica.
+  clickhouse:
+    image: clickhouse/clickhouse-server:${VERSION_CLICKHOUSE:-24.8}
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: zenit
+      CLICKHOUSE_PASSWORD: ${CH_CLAVE:?falta CH_CLAVE; openssl rand -hex 24}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "0"
+    volumes:
+      - ch_datos:/var/lib/clickhouse
+      - ./clickhouse/config.d/zenit.xml:/etc/clickhouse-server/config.d/zenit.xml:ro
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    deploy:
+      resources:
+        limits:
+          memory: ${LIMITE_MEMORIA_CLICKHOUSE:-2g}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8123/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Una sola vez por arranque: crea o completa las tablas de registros y
+  # trazas desde deploy/clickhouse/*.sql. Idempotente.
+  clickhouse-esquema:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "zenit.admin", "migrar-clickhouse"]
+    restart: "no"
+    environment:
+      <<: *ch
+      RUTA_ESQUEMA_CH: /etc/zenit/clickhouse
+    volumes:
+      - ./clickhouse:/etc/zenit/clickhouse:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  # Una sola vez por arranque: aplica deploy/postgres/*.sql (lo nuevo de cada
+  # epica, en una base que ya existia) e importa catalogo.json conservando los
+  # ids. Idempotente, como influxdb-bases.
+  postgres-esquema:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "zenit.admin", "migrar-pg"]
+    restart: "no"
+    environment:
+      <<: *pg
+      RUTA_ESQUEMA_PG: /etc/zenit/postgres
+      RUTA_CATALOGO: /etc/zenit/catalogo/catalogo.json
+    volumes:
+      - ./postgres:/etc/zenit/postgres:ro
+      - ./catalogo:/etc/zenit/catalogo:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Descubrimiento de activos cada 15 minutos (H-009). Cada proveedor se
+  # activa solo si su credencial de solo lectura esta en deploy/.env; los
+  # archivos (credenciales de la sesion de AWS, CA del Proxmox) van en
+  # deploy/secretos/descubrimiento/, que no se versiona.
+  descubridor:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "zenit.descubrimiento", "--cada", "${DESCUBRIMIENTO_CADA:-900}"]
+    restart: unless-stopped
+    environment:
+      <<: [*influx, *pg, *ch]
+      DO_TOKEN: ${DO_TOKEN:-}
+      DO_ETIQUETA: ${DO_ETIQUETA:-zenit-nodo}
+      PROXMOX_URL: ${PROXMOX_URL:-}
+      PROXMOX_TOKEN: ${PROXMOX_TOKEN:-}
+      PROXMOX_CA: ${PROXMOX_CA:-}
+      PROXMOX_NOMBRE_TLS: ${PROXMOX_NOMBRE_TLS:-}
+      PROXMOX_ETIQUETA: ${PROXMOX_ETIQUETA:-zenit-nodo}
+      DESCUBRIR_AWS: ${DESCUBRIR_AWS:-0}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_SHARED_CREDENTIALS_FILE: /run/zenit/descubrimiento/aws-credenciales
+      # Azure: la identidad administrada de la VM de la plataforma, con rol Reader
+      # sobre el grupo de recursos (docs/proveedores.md). Sin secretos.
+      DESCUBRIR_AZURE: ${DESCUBRIR_AZURE:-0}
+      AZURE_SUSCRIPCION: ${AZURE_SUSCRIPCION:-}
+      AZURE_GRUPO: ${AZURE_GRUPO:-}
+    volumes:
+      - ./secretos/descubrimiento:/run/zenit/descubrimiento:ro
+    # Si la API del Proxmox llega por un tunel SSH al anfitrion
+    # (docs/proveedores.md, seccion 3): https://host.docker.internal:18006
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres-esquema:
+        condition: service_completed_successfully
+      clickhouse-esquema:
+        condition: service_completed_successfully
+
+  # Resumenes por minuto y por hora (H-018), cada 60 s. La primera vez
+  # rellena hacia atras lo que retiene zenit_raw, por tramos.
+  agregador:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "zenit.agregacion", "--cada", "60"]
+    restart: unless-stopped
+    environment:
+      <<: [*influx, *pg]
+      AGREGACION_RELLENO: ${AGREGACION_RELLENO:-${RETENCION_RAW:-30d}}
+    depends_on:
+      influxdb-bases:
+        condition: service_completed_successfully
+      postgres-esquema:
+        condition: service_completed_successfully
+
   api:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.3.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
     restart: unless-stopped
     environment:
-      <<: [*influx, *pg]
+      <<: [*influx, *pg, *ch]
       RUTA_CATALOGO: /etc/zenit/catalogo/catalogo.json
+      RUTA_POLITICA: /etc/zenit/gobernanza/politica.json
+      # firma las sesiones; sin el, cada reinicio de la API cierra todas
+      ZENIT_SECRETO_SESION: ${ZENIT_SECRETO_SESION:?falta ZENIT_SECRETO_SESION; openssl rand -hex 32}
+      # con el que los nodos envian su instantanea de configuracion
+      TOKEN_INSTANTANEAS: ${TOKEN_INSTANTANEAS:?falta TOKEN_INSTANTANEAS; openssl rand -hex 32}
     volumes:
       - ./catalogo:/etc/zenit/catalogo:ro
+      - ./gobernanza:/etc/zenit/gobernanza:ro
     # 8000 NO se publica: la API se alcanza por el borde en el 443
     depends_on:
       influxdb-bases:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
+      postgres-esquema:
+        condition: service_completed_successfully
+      clickhouse-esquema:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/salud')"]
@@ -131,7 +289,8 @@ services:
       retries: 5
       start_period: 10s
 
-  # Tablas compartidas: inyecciones, anomalias, diagnosticos y usuarios
+  # Tablas compartidas: inyecciones, anomalias, diagnosticos, usuarios y
+  # las de gobernanza (instantaneas, facturas, cargos)
   # (contrato de la API, seccion 4). Las crea deploy/postgres/01-esquema.sql
   # la primera vez que arranca con el volumen vacio.
   postgres:
@@ -155,7 +314,7 @@ services:
   # Verdad de referencia del laboratorio: lee los registros que la ingesta
   # guardo y los deja en la tabla inyecciones, una vez por minuto (H-024).
   cargador:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.3.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
     build:
       context: ../backend
       dockerfile: Dockerfile.api
@@ -171,7 +330,7 @@ services:
         condition: service_healthy
 
   web:
-    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-web:${VERSION_WEB:-0.2.0}
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-web:${VERSION_WEB:-0.3.0}
     build: ../frontend
     restart: unless-stopped
     healthcheck:
@@ -213,6 +372,26 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      # mTLS (H-012): la CA publica, la misma que tienen los agentes
+      - type: bind
+        source: ../laboratorio/agente/ca.crt
+        target: /etc/nginx/tls/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./borde/mtls-${MTLS_MODO:-transicion}.conf
+        target: /etc/nginx/zenit/mtls.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./borde/revocados.map
+        target: /etc/nginx/zenit/revocados.map
+        read_only: true
+        bind:
+          create_host_path: false
+      - borde_registros:/var/log/zenit
     ports:
       - "0.0.0.0:4317:4317"           # OTLP de los nodos
       - "0.0.0.0:443:443"             # interfaz y API, solo IP del equipo
@@ -223,6 +402,8 @@ services:
       retries: 3
 
 volumes:
+  borde_registros:                     # intentos rechazados en el 4317, con su origen
+  ch_datos:                            # registros y trazas (7 dias)
   influx_datos:                        # series temporales, sobrevive al reinicio
   ingesta_datos:                       # trazas y registros en archivo
   pg_datos:                            # inyecciones, anomalias, diagnosticos, usuarios

@@ -3,9 +3,9 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi.testclient import TestClient
 
 import falso_influx
+from sesion_prueba import con_sesion, opciones
 from zenit.api.main import crear_app
 from zenit.influx import ClienteInflux
 from zenit.protocolo_linea import construir_linea
@@ -56,7 +56,7 @@ def entorno(tmp_path):
     catalogo = tmp_path / "catalogo.json"
     catalogo.write_text(json.dumps({"zenit-nodo-aws": ACTIVO, "i-0abc": ACTIVO, "zenit-nodo-onprem": "activo-onprem-01"}))
     repo = RepositorioInflux(cliente, "zenit_raw", cache_s=0)
-    yield repo, TestClient(crear_app(repo, catalogo)), almacen
+    yield repo, con_sesion(crear_app(repo, catalogo, **opciones())), almacen
     srv.shutdown()
 
 
@@ -128,7 +128,7 @@ def test_rango_invalido(entorno):
     with pytest.raises(ErrorConsulta):
         repo.serie(ACTIVO, "system_cpu_utilization", FIN, INICIO)
     with pytest.raises(ErrorConsulta):
-        repo.serie(ACTIVO, "system_cpu_utilization", FIN - timedelta(hours=25), FIN)
+        repo.serie(ACTIVO, "system_cpu_utilization", FIN - timedelta(days=181), FIN)
 
 
 # ------------------------------------------------------------------ API

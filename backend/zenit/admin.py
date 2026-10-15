@@ -5,13 +5,22 @@ Se corre dentro del contenedor de la API, que ya tiene la red y el token:
     docker compose exec api python -m zenit.admin crear-bases
     docker compose exec api python -m zenit.admin verificar
     docker compose exec api python -m zenit.admin huecos activo-aws-nodo-01 --minutos 30
+    docker compose exec api python -m zenit.admin retencion        (H-020)
+    docker compose exec api python -m zenit.admin espacio          (H-020)
+    docker compose exec api python -m zenit.admin agregacion       (H-018)
 
 Y para el laboratorio de fallos (epica 2):
 
     python -m zenit.admin cargar-verdad --cada 60          (lo corre el servicio cargador)
     python -m zenit.admin exportar --desde 2026-10-05T00:00Z --hasta 2026-10-07T00:00Z --salida /exportaciones/x
 
-crear-bases es idempotente: si la base existe, solo ajusta su retencion.
+Y para el catalogo de activos (epica 1):
+
+    python -m zenit.admin migrar-pg                 (lo corre el servicio postgres-esquema)
+    python -m zenit.admin catalogo listar
+    python -m zenit.admin catalogo admitir zenit-nodo-onprem activo-onprem-nodo-01 --proveedor proxmox
+
+crear-bases y migrar-pg son idempotentes: repetirlos no cambia nada.
 """
 import argparse
 import csv
@@ -35,6 +44,9 @@ BASES = (
     ("zenit_1h", os.environ.get("RETENCION_1H", "180d")),
 )
 LIMITE_COLUMNAS = int(os.environ.get("LIMITE_COLUMNAS", "500"))
+# Cuarta base: metricas de la propia plataforma (H-021). No lleva las etiquetas
+# canonicas de los activos, asi que verificar no la revisa.
+BASE_INTERNA = ("zenit_interno", os.environ.get("RETENCION_INTERNA", "7d"))
 
 
 def _cliente() -> ClienteInflux:
@@ -42,7 +54,7 @@ def _cliente() -> ClienteInflux:
 
 
 def crear_bases(cliente: ClienteInflux) -> int:
-    for bd, retencion in BASES:
+    for bd, retencion in (*BASES, BASE_INTERNA):
         if cliente.crear_base(bd, retencion):
             print(f"creada   {bd:10s} retencion {retencion}")
         else:
@@ -277,6 +289,13 @@ def exportar(cliente: ClienteInflux, desde: datetime, hasta: datetime, salida: P
             print(f"  {tabla:45s} {total:8d} filas")
 
     activos = [activo] if activo else []
+    if not activos and conexion is not None:
+        from zenit import catalogo
+
+        try:
+            activos = [a["id"] for a in catalogo.listar_activos(conexion)]
+        except Exception:  # noqa: BLE001 - plataforma sin el esquema de la epica 1
+            conexion.rollback()
     if not activos and ruta_catalogo and Path(ruta_catalogo).exists():
         activos = sorted(set(json.loads(Path(ruta_catalogo).read_text()).values()))
     with open(salida / "huecos.csv", "w", newline="") as f:
@@ -311,6 +330,309 @@ def exportar(cliente: ClienteInflux, desde: datetime, hasta: datetime, salida: P
     return 0
 
 
+# ------------------------------------------------------------------ epica 1: catalogo
+def migrar_pg(carpeta: Path, ruta_catalogo: str = "") -> int:
+    """Aplica deploy/postgres/*.sql en orden, en una plataforma que ya existia.
+
+    PostgreSQL solo ejecuta esa carpeta con el volumen vacio; despues, cada
+    archivo nuevo hay que aplicarlo. Todos estan escritos con IF NOT EXISTS,
+    asi que se pueden repetir. Al final importa catalogo.json (lo que se
+    admitia a mano en las epicas 0 y 2), conservando los ids.
+    """
+    from zenit import catalogo
+
+    url = os.environ.get("PG_URL")
+    if not url:
+        print("falta PG_URL", file=sys.stderr)
+        return 2
+    catalogo.esperar_pg(url)
+    archivos = sorted(Path(carpeta).glob("*.sql"))
+    if not archivos:
+        print(f"no hay archivos .sql en {carpeta}", file=sys.stderr)
+        return 2
+    with catalogo.conectar(url) as c:
+        for a in archivos:
+            with c.cursor() as cur:
+                cur.execute(a.read_text())
+            c.commit()
+            print(f"aplicado  {a.name}")
+        if ruta_catalogo:
+            n = catalogo.importar_archivo(c, Path(ruta_catalogo))
+            print(f"catalogo.json: {n} cambios" if n else "catalogo.json: nada nuevo")
+    return 0
+
+
+def migrar_clickhouse(carpeta: Path) -> int:
+    """Aplica deploy/clickhouse/*.sql (todo IF NOT EXISTS). Lo corre el servicio
+    clickhouse-esquema en cada arranque: el esquema se administra desde el
+    repositorio y no lo crea nadie automaticamente (ADR-007)."""
+    from zenit.clickhouse import ClienteClickHouse
+
+    url = os.environ.get("CLICKHOUSE_URL")
+    if not url:
+        print("falta CLICKHOUSE_URL", file=sys.stderr)
+        return 2
+    cliente = ClienteClickHouse(url, os.environ.get("CLICKHOUSE_USUARIO", "zenit"), os.environ.get("CLICKHOUSE_CLAVE", ""))
+    for intento in range(30):
+        if cliente.disponible():
+            break
+        time.sleep(2)
+    archivos = sorted(Path(carpeta).glob("*.sql"))
+    if not archivos:
+        print(f"no hay archivos .sql en {carpeta}", file=sys.stderr)
+        return 2
+    for a in archivos:
+        n = cliente.aplicar_esquema(a.read_text())
+        print(f"aplicado  {a.name} ({n} sentencias)")
+    return 0
+
+
+def orden_catalogo(args) -> int:
+    from zenit import catalogo
+
+    url = os.environ.get("PG_URL")
+    if not url:
+        print("falta PG_URL", file=sys.stderr)
+        return 2
+    with catalogo.conectar(url) as c:
+        if args.accion == "admitir":
+            try:
+                cambio = catalogo.agregar_manual(c, args.clave, args.activo, args.proveedor,
+                                                 region=args.region, entorno=args.entorno)
+            except ValueError as e:
+                print(e, file=sys.stderr)
+                return 1
+            print(f"{args.clave} -> {args.activo}" + ("" if cambio else " (ya estaba)"))
+            print("la ingesta lo toma en menos de 30 s")
+            return 0
+        for a in catalogo.listar_activos(c):
+            visto = a["visto"].strftime("%Y-%m-%d %H:%M") if a["visto"] else "nunca"
+            print(f"{a['id']:28s} {a['proveedor']:13s} {a['estado']:9s} {a['origen']:15s} "
+                  f"visto {visto:16s} {', '.join(a['claves'])}")
+        for e in catalogo.ejecuciones(c)["ultimas"]:
+            print(f"ultimo descubrimiento {e['proveedor']}: {e['estado']} {e['inicio']:%Y-%m-%d %H:%M} "
+                  f"vistos={e['vistos']} nuevos={e['nuevos']} retirados={e['retirados']}"
+                  + (f" error={e['error']}" if e["error"] else ""))
+    return 0
+
+
+# ------------------------------------------------------------------ epica 1: niveles
+def _duracion(texto: str) -> timedelta:
+    texto = texto.strip().lower()
+    unidades = {"d": "days", "h": "hours"}
+    if not texto or texto[-1] not in unidades:
+        raise ValueError(f"retencion no reconocida: {texto!r}")
+    return timedelta(**{unidades[texto[-1]]: int(texto[:-1])})
+
+
+def _hay_filas(cliente: ClienteInflux, bd: str, tabla: str, desde: datetime, hasta: datetime) -> bool:
+    formato = "%Y-%m-%d %H:%M:%S"
+    filas = cliente.consultar(
+        bd, f'SELECT count(*) AS n FROM "{tabla}" WHERE time >= TIMESTAMP \'{desde.strftime(formato)}\' '
+            f"AND time < TIMESTAMP '{hasta.strftime(formato)}'")
+    return bool(filas and filas[0].get("n"))
+
+
+def retencion(cliente: ClienteInflux, tabla: str = "system_cpu_utilization") -> int:
+    """H-020, criterio 2: la eliminacion es automatica y verificable.
+
+    En Core la retencion se aplica al consultar: lo que paso la ventana deja de
+    aparecer aunque el archivo se borre despues. Se verifica asi, por base:
+    una hora justo fuera de la ventana no devuelve nada, y una hora justo dentro
+    devuelve filas si la plataforma lleva corriendo ese tiempo. No hace falta
+    recorrer toda la base (Core limita los archivos que toca una consulta).
+    """
+    ahora = datetime.now(timezone.utc).replace(microsecond=0)
+    fallas = 0
+    print(f"{'base':14s} {'retencion':10s} {'fuera de la ventana':22s} justo dentro")
+    for bd, texto in (*BASES, BASE_INTERNA):
+        t = tabla if bd != BASE_INTERNA[0] else "zenit_fuente_recibidas"
+        borde = ahora - _duracion(texto)
+        try:
+            fuera = _hay_filas(cliente, bd, t, borde - timedelta(hours=2), borde - timedelta(hours=1))
+            dentro = _hay_filas(cliente, bd, t, borde + timedelta(hours=1), borde + timedelta(hours=2))
+        except ErrorInflux as e:
+            print(f"{bd:14s} {texto:10s} sin datos todavia ({e.estado})")
+            continue
+        fallas += fuera
+        print(f"{bd:14s} {texto:10s} {'FALLA: hay filas' if fuera else 'ninguna fila (OK)':22s} "
+              f"{'hay filas' if dentro else 'sin filas: la plataforma es mas nueva que la ventana'}")
+    return 1 if fallas else 0
+
+
+def espacio(cliente: ClienteInflux) -> int:
+    """H-020, criterio 3: espacio ocupado por nivel, desde system.parquet_files."""
+    total_general = 0
+    for bd, _ in (*BASES, BASE_INTERNA):
+        tablas = _columnas(cliente, bd)
+        total, archivos = 0, 0
+        for tabla in tablas:
+            try:
+                filas = cliente.consultar(
+                    bd, "SELECT count(*) AS archivos, sum(size_bytes) AS bytes FROM system.parquet_files "
+                        f"WHERE table_name = '{tabla}'")
+            except ErrorInflux as e:
+                print(f"{bd}: system.parquet_files no respondio ({e}). Usa scripts/influx/espacio.sh",
+                      file=sys.stderr)
+                return 2
+            if filas:
+                total += int(filas[0].get("bytes") or 0)
+                archivos += int(filas[0].get("archivos") or 0)
+        total_general += total
+        print(f"{bd:14s} {len(tablas):3d} tablas {archivos:7d} archivos {total / 2**20:10.1f} MiB")
+    print(f"{'total':14s} {total_general / 2**20:39.1f} MiB  (lo persistido; lo que esta en memoria aun no cuenta)")
+    return 0
+
+
+def estado_agregacion() -> int:
+    from zenit import catalogo
+
+    with catalogo.conectar(os.environ["PG_URL"]) as c, c.cursor() as cur:
+        cur.execute("SELECT nivel, hasta, rehacer_desde, actualizado FROM agregacion_progreso ORDER BY nivel")
+        filas = cur.fetchall()
+    if not filas:
+        print("el agregador todavia no corrio")
+        return 1
+    ahora = datetime.now(timezone.utc)
+    for nivel, hasta, rehacer, actualizado in filas:
+        print(f"{nivel}: resumido hasta {hasta:%Y-%m-%d %H:%M} UTC, retraso {(ahora - hasta).total_seconds():.0f} s, "
+              f"ultimo ciclo {actualizado:%H:%M:%S}" + (f", pendiente rehacer desde {rehacer:%Y-%m-%d %H:%M}" if rehacer else ""))
+    return 0
+
+
+def reagregar(desde: datetime) -> int:
+    from zenit import catalogo
+
+    with catalogo.conectar(os.environ["PG_URL"]) as c:
+        catalogo.retroceder_agregacion(c, desde)
+    print(f"el agregador rehace desde {desde:%Y-%m-%d %H:%M} UTC en su siguiente ciclo")
+    return 0
+
+
+# ------------------------------------------------------------------ epica 1: mediciones
+def _percentil(valores: list, p: float) -> float:
+    orden = sorted(valores)
+    if not orden:
+        return float("nan")
+    k = (len(orden) - 1) * p
+    i = int(k)
+    return orden[i] + (orden[min(i + 1, len(orden) - 1)] - orden[i]) * (k - i)
+
+
+def medir_latencia(api: str, activo: str, minutos: int, salida: Optional[Path]) -> int:
+    """P-REN-01 (plan de pruebas 6.2), del lado de la plataforma.
+
+    La sonda del nodo manda cada 10 s un punto de zenit.sonda cuyo valor es su
+    instante de emision. Aqui se pregunta a la API cada segundo por los
+    ultimos minutos, y la primera vez que aparece un valor se anota cuanto
+    tardo: ahora menos el valor. Los relojes del nodo y de la plataforma estan
+    sincronizados por NTP (userdata); un desfase de reloj se suma a la medida.
+    """
+    import httpx
+
+    vistos: dict = {}
+    fin = time.monotonic() + minutos * 60
+    errores = 0
+    # Lo emitido antes de la primera respuesta buena no cuenta: lo que se mide
+    # es cuanto tarda un punto nuevo, no cuanto llevaba la sonda corriendo (y
+    # una metrica recien creada tarda hasta 30 s en entrar al cache de esquema).
+    desde_valido = None
+    with httpx.Client(base_url=api.rstrip("/"), timeout=5.0) as http:
+        while time.monotonic() < fin:
+            ciclo = time.monotonic()
+            ahora = datetime.now(timezone.utc)
+            try:
+                r = http.get(f"/api/activos/{activo}/series/zenit_sonda",
+                             params={"desde": (ahora - timedelta(minutes=3)).isoformat(), "hasta": ahora.isoformat()})
+                visto_en = time.time()
+                if r.status_code == 200:
+                    desde_valido = desde_valido or visto_en
+                    for serie in r.json()["series"]:
+                        for _, valor in serie["puntos"]:
+                            if valor not in vistos:
+                                vistos[valor] = visto_en - valor
+                elif r.status_code != 422:      # 422: todavia no existe la metrica
+                    errores += 1
+            except httpx.HTTPError:
+                errores += 1
+            time.sleep(max(0.0, 1.0 - (time.monotonic() - ciclo)))
+    latencias = [l for v, l in sorted(vistos.items()) if desde_valido and v >= desde_valido]
+    if salida:
+        with open(salida, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["emitido_utc", "latencia_s"])
+            for v, l in sorted(vistos.items()):
+                w.writerow([datetime.fromtimestamp(v, timezone.utc).isoformat(), round(l, 3)])
+    if not latencias:
+        print("no se vio ningun punto nuevo de zenit_sonda: esta corriendo la sonda en el nodo?", file=sys.stderr)
+        return 1
+    p95 = _percentil(latencias, 0.95)
+    print(f"P-REN-01 {activo}: {len(latencias)} puntos en {minutos} min, errores de consulta {errores}")
+    print(f"  latencia p50 {_percentil(latencias, 0.5):.1f} s · p95 {p95:.1f} s · maxima {max(latencias):.1f} s")
+    print(f"  RNF-REN-01 (p95 <= 30 s): {'CUMPLE' if p95 <= 30 else 'NO CUMPLE'}")
+    return 0 if p95 <= 30 else 1
+
+
+def contar(cliente: ClienteInflux, tabla: str, activo: str, desde: datetime, hasta: datetime,
+           esperados: Optional[int]) -> int:
+    """P-REN-02 (plan de pruebas 6.3): filas almacenadas de una metrica en la ventana."""
+    if not es_identificador(tabla):
+        print(f"nombre de tabla no valido: {tabla!r}", file=sys.stderr)
+        return 2
+    total = 0
+    formato = "%Y-%m-%d %H:%M:%S"
+    for d, h in _dias(desde, hasta):
+        (f,) = cliente.consultar(
+            "zenit_raw", f'SELECT count(*) AS n FROM "{tabla}" WHERE "zenit_asset_id" = $activo '
+                         f"AND time >= TIMESTAMP '{d.strftime(formato)}' AND time < TIMESTAMP '{h.strftime(formato)}'",
+            {"activo": activo}) or [{"n": 0}]
+        total += int(f.get("n") or 0)
+    print(f"{tabla} de {activo} entre {desde:%H:%M:%S} y {hasta:%H:%M:%S} UTC: {total} filas")
+    if esperados:
+        completitud = total / esperados
+        print(f"  completitud {completitud:.4%} de {esperados} enviados; RNF-REN-02 (>= 99,9 %): "
+              f"{'CUMPLE' if completitud >= 0.999 else 'NO CUMPLE'}")
+        return 0 if completitud >= 0.999 else 1
+    return 0
+
+
+def contar_registros(desde: datetime, hasta: datetime, servicio: str, esperados: Optional[int]) -> int:
+    from zenit.repositorio.analitico import RepositorioAnalitico
+
+    n = RepositorioAnalitico.desde_entorno().contar_registros(desde, hasta, servicio=servicio)
+    print(f"registros de {servicio} entre {desde:%H:%M:%S} y {hasta:%H:%M:%S} UTC: {n}")
+    if esperados:
+        print(f"  {n / esperados:.4%} de {esperados} enviados; H-016 (sin perdida): "
+              f"{'CUMPLE' if n >= esperados else 'NO CUMPLE'}")
+        return 0 if n >= esperados else 1
+    return 0
+
+
+def informe_ingesta(cliente: ClienteInflux, desde: datetime, hasta: datetime) -> int:
+    """H-031: memoria, cola y contrapresion de la ingesta en una ventana, desde zenit_interno."""
+    formato = "%Y-%m-%d %H:%M:%S"
+    rango = f"time >= TIMESTAMP '{desde.strftime(formato)}' AND time < TIMESTAMP '{hasta.strftime(formato)}'"
+    print(f"ingesta entre {desde:%Y-%m-%d %H:%M} y {hasta:%H:%M} UTC")
+    for nombre, como in (("memoria_bytes", "max"), ("lineas_pendientes", "max"), ("filas_pendientes_analitico", "max"),
+                         ("contrapresion", "aumento"), ("rechazadas_por_almacen", "aumento"),
+                         ("peticiones_rechazadas", "aumento")):
+        try:
+            (f,) = cliente.consultar(BASE_INTERNA[0], f'SELECT max("value") AS mx, min("value") AS mn '
+                                                      f'FROM "zenit_ingesta_{nombre}" WHERE {rango}') or [{}]
+        except ErrorInflux:
+            f = {}
+        if f.get("mx") is None:
+            print(f"  {nombre:28s} sin datos")
+            continue
+        valor = f["mx"] if como == "max" else f["mx"] - f["mn"]
+        texto = f"{valor / 2**20:.0f} MiB" if nombre == "memoria_bytes" else f"{valor:.0f}"
+        print(f"  {nombre:28s} {como:8s} {texto}")
+    limite = os.environ.get("LIMITE_MEMORIA_INGESTA")
+    if limite:
+        print(f"  limite declarado: {limite}")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m zenit.admin")
     sub = p.add_subparsers(dest="orden", required=True)
@@ -331,7 +653,77 @@ def main(argv=None) -> int:
     e.add_argument("--hasta", required=True, type=_fecha_arg)
     e.add_argument("--salida", required=True, type=Path)
     e.add_argument("--activo", default="")
+    m = sub.add_parser("migrar-pg", help="aplica deploy/postgres/*.sql e importa catalogo.json")
+    m.add_argument("--carpeta", default=os.environ.get("RUTA_ESQUEMA_PG", "/etc/zenit/postgres"))
+    m.add_argument("--catalogo", default=os.environ.get("RUTA_CATALOGO", ""))
+    k = sub.add_parser("catalogo", help="activos del catalogo y admision manual")
+    ks = k.add_subparsers(dest="accion", required=True)
+    ks.add_parser("listar")
+    ka = ks.add_parser("admitir", help="asocia una clave host.name (ZENIT_NODO) a un activo")
+    ka.add_argument("clave")
+    ka.add_argument("activo")
+    ka.add_argument("--proveedor", default="desconocido")
+    ka.add_argument("--region")
+    ka.add_argument("--entorno", default="lab")
+    sub.add_parser("asociar-huerfanas", help="reasigna la telemetria huerfana cuya clave ya esta en el catalogo")
+    mc = sub.add_parser("migrar-clickhouse", help="aplica deploy/clickhouse/*.sql")
+    mc.add_argument("--carpeta", default=os.environ.get("RUTA_ESQUEMA_CH", "/etc/zenit/clickhouse"))
+    rt = sub.add_parser("retencion", help="verifica que cada base descarta lo que paso su ventana (H-020)")
+    rt.add_argument("--tabla", default="system_cpu_utilization")
+    sub.add_parser("espacio", help="espacio ocupado por cada nivel (H-020)")
+    sub.add_parser("agregacion", help="hasta donde llegan los resumenes y con que retraso (H-018)")
+    ra = sub.add_parser("reagregar", help="rehace los resumenes desde una fecha (datos que llegaron muy tarde)")
+    ra.add_argument("--desde", required=True, type=_fecha_arg)
+    ml = sub.add_parser("medir-latencia", help="P-REN-01: latencia de extremo a extremo con la sonda")
+    ml.add_argument("activo")
+    ml.add_argument("--minutos", type=int, default=60)
+    ml.add_argument("--api", default="http://localhost:8000")
+    ml.add_argument("--salida", type=Path)
+    co = sub.add_parser("contar", help="P-REN-02: filas de una metrica en una ventana")
+    co.add_argument("activo")
+    co.add_argument("--tabla", default="zenit_sonda_completitud")
+    co.add_argument("--desde", required=True, type=_fecha_arg)
+    co.add_argument("--hasta", required=True, type=_fecha_arg)
+    co.add_argument("--esperados", type=int)
+    cr = sub.add_parser("contar-registros", help="H-016: registros de un servicio en una ventana")
+    cr.add_argument("--servicio", default="sonda")
+    cr.add_argument("--desde", required=True, type=_fecha_arg)
+    cr.add_argument("--hasta", required=True, type=_fecha_arg)
+    cr.add_argument("--esperados", type=int)
+    ii = sub.add_parser("informe-ingesta", help="H-031: memoria, cola y contrapresion en una ventana")
+    ii.add_argument("--desde", required=True, type=_fecha_arg)
+    ii.add_argument("--hasta", required=True, type=_fecha_arg)
     args = p.parse_args(argv)
+
+    if args.orden == "medir-latencia":
+        return medir_latencia(args.api, args.activo, args.minutos, args.salida)
+    if args.orden == "contar-registros":
+        return contar_registros(args.desde, args.hasta, args.servicio, args.esperados)
+
+    if args.orden in ("agregacion", "reagregar"):
+        if not os.environ.get("PG_URL"):
+            print("falta PG_URL", file=sys.stderr)
+            return 2
+        return estado_agregacion() if args.orden == "agregacion" else reagregar(args.desde)
+
+    if args.orden == "asociar-huerfanas":
+        from zenit.huerfanas import asociar_desde_entorno
+
+        if not os.environ.get("PG_URL"):
+            print("falta PG_URL", file=sys.stderr)
+            return 2
+        hechas = asociar_desde_entorno(os.environ["PG_URL"])
+        for clave, activo, n1, n2 in hechas:
+            print(f"{clave} -> {activo}: {n1} filas de metricas, {n2} de registros y trazas")
+        print("nada pendiente" if not hechas else f"{len(hechas)} origenes asociados")
+        return 0
+
+    if args.orden == "migrar-pg":
+        return migrar_pg(Path(args.carpeta), args.catalogo)
+    if args.orden == "migrar-clickhouse":
+        return migrar_clickhouse(Path(args.carpeta))
+    if args.orden == "catalogo":
+        return orden_catalogo(args)
 
     if args.orden == "cargar-verdad":
         if args.crudo and args.cada:
@@ -355,6 +747,14 @@ def main(argv=None) -> int:
             return crear_bases(cliente)
         if args.orden == "verificar":
             return verificar(cliente, args.horas)
+        if args.orden == "retencion":
+            return retencion(cliente, args.tabla)
+        if args.orden == "espacio":
+            return espacio(cliente)
+        if args.orden == "contar":
+            return contar(cliente, args.tabla, args.activo, args.desde, args.hasta, args.esperados)
+        if args.orden == "informe-ingesta":
+            return informe_ingesta(cliente, args.desde, args.hasta)
         return huecos(cliente, args.activo, args.minutos, args.metrica)
     except ErrorInflux as e:
         print(f"error del almacen: {e}", file=sys.stderr)

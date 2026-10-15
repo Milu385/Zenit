@@ -17,6 +17,7 @@ Cambios respecto a la version de H-004:
 """
 import hmac
 import json
+import re
 import logging
 import os
 import signal
@@ -33,14 +34,20 @@ from opentelemetry.proto.collector.logs.v1 import logs_service_pb2, logs_service
 from opentelemetry.proto.collector.metrics.v1 import metrics_service_pb2, metrics_service_pb2_grpc
 from opentelemetry.proto.collector.trace.v1 import trace_service_pb2, trace_service_pb2_grpc
 
-from destinos import DestinoInflux, DestinoJsonl, Lote
-from extraccion import atributos, extraer_puntos, resolver_identidad, valor_de
-from zenit.influx import ClienteInflux
+from destinos import DestinoInflux, DestinoJsonl, DestinoPorLotes, Lote
+from extraccion import ARCHIVO_VERDAD, atributos, extraer_puntos, fila_registro, fila_traza, resolver_identidad
+from zenit import salud
+from zenit.catalogo import AcumuladorHuerfanas, CatalogoPG, conectar
+from zenit.clickhouse import ClienteClickHouse
+from zenit.influx import ClienteInflux, ErrorInflux
 from zenit.protocolo_linea import construir_linea
 
 log = logging.getLogger("ingesta")
 
 SENALES = ("metricas", "trazas", "registros")
+# Un punto mas viejo que esto ya pudo quedar fuera de lo que el agregador
+# rehace en cada ciclo (30 s de llegada mas 2 minutos).
+TARDIO_NS = 3 * 60 * 1_000_000_000
 
 
 # ------------------------------------------------------------------ contadores
@@ -62,6 +69,8 @@ class Contadores:
         self._valores = {s: dict.fromkeys(self.CAMPOS, 0) for s in SENALES}
         self.peticiones_rechazadas = 0   # token invalido
         self.contrapresion = 0           # peticiones devueltas por cola llena
+        self.emisor_distinto = 0         # bloques cuyo host.name no es el CN del certificado
+        self.sin_certificado: dict = {}  # host.name -> peticiones que llegaron sin certificado de cliente
 
     def sumar(self, senal: str, campo: str, n: int = 1) -> None:
         if n:
@@ -81,6 +90,8 @@ class Contadores:
             por_senal = {s: dict(v) for s, v in self._valores.items()}
             rechazadas = self.peticiones_rechazadas
             contrapresion = self.contrapresion
+            emisor_distinto = self.emisor_distinto
+            sin_certificado = dict(self.sin_certificado)
         for v in por_senal.values():
             v["en_cola"] = (
                 v["recibidas"] - v["emitidas"] - v["sin_valor"] - v["errores"] - v["rechazadas_por_almacen"]
@@ -90,6 +101,8 @@ class Contadores:
             **totales,
             "rechazadas": rechazadas,
             "contrapresion": contrapresion,
+            "emisor_distinto": emisor_distinto,
+            "sin_certificado": sin_certificado,
             "senales": por_senal,
         }
 
@@ -155,6 +168,16 @@ class Catalogo:
         return {"activos": len(self._datos), "cargado": self.cargado, "errores": self.errores}
 
 
+def es_verdad(item: dict) -> bool:
+    """Un registro de la verdad de referencia del laboratorio. El filelog del
+    agente pone log.file.name; por si una version del agente no lo pusiera,
+    tambien se reconoce por la forma de la linea que escribe el inyector."""
+    if item.get("atributos", {}).get("log.file.name") == ARCHIVO_VERDAD:
+        return True
+    cuerpo = item.get("cuerpo") or ""
+    return cuerpo.startswith("{") and '"uid"' in cuerpo and '"evento"' in cuerpo
+
+
 # ------------------------------------------------------------------ nucleo
 class PuntoDeEntrada:
     """Todo el estado del servicio, inyectable para las pruebas."""
@@ -163,22 +186,68 @@ class PuntoDeEntrada:
         self.catalogo = catalogo
         self.servicio_por_defecto = servicio_por_defecto
         self.contadores = Contadores()
+        self.huerfanas = AcumuladorHuerfanas()   # origenes sin resolver, para la vista de H-011
+        # Solo detras del borde: sin el, ninguna peticion trae x-zenit-emisor
+        self.contar_sin_certificado = False
+        self.ultimo_volcado_huerfanas: Optional[str] = None
+        # salud de las fuentes (H-021): una cuenta para PostgreSQL y otra para
+        # zenit_interno, porque cada destino falla y se reintenta por su lado
+        self.fuentes_pg = salud.AcumuladorFuentes()
+        self.fuentes_interno = salud.AcumuladorFuentes()
+        self.interno: Optional[ClienteInflux] = None
+        # el punto mas viejo aceptado desde el ultimo volcado: si es anterior a
+        # lo que el agregador ya resumio, hay que pedirle que rehaga (H-018)
+        self._mas_viejo_ns: Optional[int] = None
+        self._candado_viejo = threading.Lock()
+        self.bd_interna = salud.BD_INTERNA
+        self.ultimo_volcado_salud: Optional[str] = None
         self.destino_metricas = None
-        self.destinos_archivo: dict = {}
+        self.destinos_archivo: dict = {}       # registros y trazas sin ClickHouse
+        self.destinos_analiticos: dict = {}    # registros y trazas a ClickHouse
+        self.verdad = None                     # DestinoJsonl de la verdad de referencia
 
-    def identidad(self, recurso):
-        return resolver_identidad(atributos(recurso.attributes), self.catalogo.actual(), self.servicio_por_defecto)
+    def identidad(self, recurso, emisor: Optional[str] = None):
+        ident = resolver_identidad(atributos(recurso.attributes), self.catalogo.actual(), self.servicio_por_defecto)
+        if emisor is None and self.contar_sin_certificado:
+            # modo transicion del borde: quien sigue entrando sin certificado.
+            # Cuando esto deja de crecer, se puede pasar a estricto.
+            host = ident.etiquetas["host_name"]
+            with self.contadores._candado:
+                if host in self.contadores.sin_certificado or len(self.contadores.sin_certificado) < 50:
+                    self.contadores.sin_certificado[host] = self.contadores.sin_certificado.get(host, 0) + 1
+        if emisor and emisor != ident.etiquetas["host_name"]:
+            # El certificado dice un nodo y la telemetria dice otro. No se
+            # rechaza (un nodo puede reenviar por otro en el futuro), pero se
+            # cuenta y se avisa: es lo primero que se mira si alguien con un
+            # certificado valido intenta hacerse pasar por otro nodo.
+            with self.contadores._candado:
+                self.contadores.emisor_distinto += 1
+                primera = self.contadores.emisor_distinto == 1
+            if primera or self.contadores.emisor_distinto % 1000 == 0:
+                log.warning("el certificado %s envia telemetria de %s", emisor, ident.etiquetas["host_name"])
+        return ident
+
+    def _contar_fuentes(self, senal: str, por_bloque: list) -> None:
+        for ident, n, *errores in por_bloque:
+            self.fuentes_pg.sumar(ident.etiquetas, senal, n, errores[0] if errores else 0)
+            self.fuentes_interno.sumar(ident.etiquetas, senal, n, errores[0] if errores else 0)
+            if ident.huerfana and n:
+                self.huerfanas.sumar(ident.valor_clave, ident.clave_nativa,
+                                     ident.etiquetas.get("cloud_provider"), senal, n)
 
     # ---- metricas
-    def exportar_metricas(self, request) -> bool:
+    def exportar_metricas(self, request, emisor: Optional[str] = None) -> bool:
         """Convierte y entrega. Devuelve False si el destino no tiene espacio."""
         ahora = time.time_ns()
         lineas, registros = [], []
         validos = huerfanos = sin_valor = errores = 0
+        minimo_ns = None
         jsonl = isinstance(self.destino_metricas, DestinoJsonl)
 
+        por_bloque = []
         for bloque in request.resource_metrics:
-            ident = self.identidad(bloque.resource)
+            ident = self.identidad(bloque.resource, emisor)
+            validos_antes, errores_antes = validos, errores
             for alcance in bloque.scope_metrics:
                 for metrica in alcance.metrics:
                     for punto in extraer_puntos(metrica, ahora):
@@ -213,7 +282,10 @@ class PuntoDeEntrada:
                         lineas.extend(propias)
                         registros.extend(suyos)
                         validos += 1
+                        if minimo_ns is None or punto.tiempo_ns < minimo_ns:
+                            minimo_ns = punto.tiempo_ns
                         huerfanos += ident.huerfana
+            por_bloque.append((ident, validos - validos_antes, errores - errores_antes))
 
         # Se cuenta como recibido ANTES de entregar: el escritor puede sumar
         # emitidas apenas lo tiene, y en_cola nunca debe quedar negativo. Si
@@ -232,36 +304,74 @@ class PuntoDeEntrada:
             c.sin_espacio()
             return False
 
+        if validos and minimo_ns is not None:
+            with self._candado_viejo:
+                if self._mas_viejo_ns is None or minimo_ns < self._mas_viejo_ns:
+                    self._mas_viejo_ns = minimo_ns
         c.sumar("metricas", "sin_valor", sin_valor)
         c.sumar("metricas", "errores", errores)
         c.sumar("metricas", "huerfanas", huerfanos)
+        self._contar_fuentes("metricas", por_bloque)
         if jsonl:
             c.sumar("metricas", "emitidas", validos)
         return True
 
     # ---- trazas y registros: a archivo hasta la epica 1
-    def exportar_archivo(self, senal: str, bloques, extraer) -> bool:
-        """False si no se pudo escribir: quien llama responde UNAVAILABLE y el
-        agente reintenta desde su cola persistente. Responder OK sin haber
-        guardado perderia la linea en silencio (la verdad de referencia del
-        laboratorio viaja por aqui)."""
-        registros, huerfanos = [], 0
+    def exportar_senal(self, senal: str, bloques, extraer, emisor: Optional[str] = None) -> bool:
+        """Registros y trazas (H-016, H-017).
+
+        Con ClickHouse configurado van al motor analitico por lotes, como las
+        metricas a InfluxDB: si la cola esta llena se devuelve False y quien
+        llama responde UNAVAILABLE para que el agente reintente desde su cola
+        persistente. Sin ClickHouse, al archivo, como en las epicas 0 y 2.
+
+        La verdad de referencia del laboratorio (registros leidos de
+        verdad.jsonl) ademas se escribe al archivo, que es lo que lee el
+        cargador. Si eso falla, tambien se responde UNAVAILABLE: responder OK
+        sin haberla guardado la perderia en silencio.
+        """
+        filas, huerfanos, por_bloque, verdad = [], 0, [], []
         for bloque in bloques:
-            ident = self.identidad(bloque.resource)
+            ident = self.identidad(bloque.resource, emisor)
+            antes = len(filas)
             for item in extraer(bloque):
-                registros.append({**ident.etiquetas, **item})
+                fila = {**ident.etiquetas, **item}
+                filas.append(fila)
                 huerfanos += ident.huerfana
-        if not registros:
+                if senal == "registros" and es_verdad(item):
+                    verdad.append(fila)
+            por_bloque.append((ident, len(filas) - antes))
+        if not filas:
             return True
-        self.contadores.sumar(senal, "recibidas", len(registros))
-        self.contadores.sumar(senal, "huerfanas", huerfanos)
-        try:
-            self.destinos_archivo[senal].aceptar_registros(registros, len(registros))
-        except OSError:
-            log.exception("no se pudo escribir %s", senal)
-            self.contadores.sumar(senal, "errores", len(registros))
-            return False
+        analitico = self.destinos_analiticos.get(senal)
+        if analitico is not None and verdad:
+            try:
+                self.verdad.aceptar_registros(verdad, 0)
+            except OSError:
+                log.exception("no se pudo guardar la verdad de referencia")
+                return False
+
+        c = self.contadores
+        c.sumar(senal, "recibidas", len(filas))
+        if analitico is None:
+            try:
+                self.destinos_archivo[senal].aceptar_registros(filas, len(filas))
+            except OSError:
+                log.exception("no se pudo escribir %s", senal)
+                c.sumar(senal, "errores", len(filas))
+                return False
+        else:
+            lineas = [json.dumps(f, ensure_ascii=False, separators=(",", ":")) for f in filas]
+            if not analitico.aceptar(Lote(lineas, len(filas))):
+                c.sumar(senal, "recibidas", -len(filas))
+                c.sin_espacio()
+                return False
+        c.sumar(senal, "huerfanas", huerfanos)
+        self._contar_fuentes(senal, por_bloque)
         return True
+
+    # nombre de las epicas 0 y 2
+    exportar_archivo = exportar_senal
 
     def estado(self) -> dict:
         d = self.destino_metricas
@@ -273,8 +383,93 @@ class PuntoDeEntrada:
                 "reintentos": getattr(d, "reintentos", 0),
                 "ultimo_error": getattr(d, "ultimo_error", None),
             },
+            "analitico": {
+                senal: {"filas_pendientes": d.pendientes, "reintentos": d.reintentos, "ultimo_error": d.ultimo_error}
+                for senal, d in self.destinos_analiticos.items()
+            },
             "catalogo": self.catalogo.estado(),
+            "huerfanas_volcadas": self.ultimo_volcado_huerfanas,
+            "salud_volcada": self.ultimo_volcado_salud,
         }
+
+    def indicadores(self) -> dict:
+        """Lo que se guarda de la propia ingesta en zenit_interno (H-031)."""
+        c = self.contadores.instantanea()
+        return {
+            "lineas_pendientes": getattr(self.destino_metricas, "pendientes", 0),
+            "filas_pendientes_analitico": sum(d.pendientes for d in self.destinos_analiticos.values()),
+            "contrapresion": c["contrapresion"],
+            "peticiones_rechazadas": c["rechazadas"],
+            "rechazadas_por_almacen": sum(v["rechazadas_por_almacen"] for v in c["senales"].values()),
+            "memoria_bytes": memoria_residente(),
+        }
+
+    def volcar_salud(self, url: Optional[str]) -> None:
+        """Cada 10 s. Un destino caido no frena al otro ni a la recepcion."""
+        momento = time.time_ns() // 10_000_000_000 * 10_000_000_000
+        deltas = self.fuentes_interno.tomar()
+        if self.interno is not None:
+            try:
+                lineas = salud.lineas_internas(deltas, self.indicadores(), momento)
+                if lineas:
+                    self.interno.escribir(self.bd_interna, "\n".join(lineas))
+            except ErrorInflux as e:
+                # metricas internas: se pierden, no compiten con las de los activos
+                log.warning("no se pudo escribir en %s: %s", self.bd_interna, e)
+        if url:
+            self._avisar_tardios(url)
+            deltas_pg = self.fuentes_pg.tomar()
+            if deltas_pg:
+                try:
+                    with conectar(url) as c:
+                        salud.guardar_pg(c, deltas_pg)
+                    self.ultimo_volcado_salud = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                except Exception as e:  # noqa: BLE001
+                    self.fuentes_pg.devolver(deltas_pg)
+                    log.warning("no se pudo guardar la salud de las fuentes: %s", e)
+
+    def _avisar_tardios(self, url: str) -> None:
+        """Puntos con marca de tiempo anterior a lo que el agregador ya pudo
+        resumir (mas de 3 minutos): un agente que vacio su cola. Se le pide
+        rehacer desde ese minuto. Si PostgreSQL falla, se reintenta despues."""
+        with self._candado_viejo:
+            viejo, self._mas_viejo_ns = self._mas_viejo_ns, None
+        if viejo is None or viejo > time.time_ns() - TARDIO_NS:
+            return
+        desde = datetime.fromtimestamp(viejo // 60_000_000_000 * 60, timezone.utc)
+        try:
+            from zenit.catalogo import retroceder_agregacion
+
+            with conectar(url) as c:
+                retroceder_agregacion(c, desde)
+            log.info("llegaron puntos de %s: se pide rehacer los resumenes desde ahi", desde.isoformat())
+        except Exception as e:  # noqa: BLE001
+            with self._candado_viejo:
+                if self._mas_viejo_ns is None or viejo < self._mas_viejo_ns:
+                    self._mas_viejo_ns = viejo
+            log.warning("no se pudo pedir rehacer los resumenes: %s", e)
+
+    def volcar_huerfanas(self, url: str) -> None:
+        """Lleva a PostgreSQL lo acumulado. Si falla, se reintenta en el
+        siguiente ciclo sin perder la cuenta."""
+        try:
+            n = self.huerfanas.volcar(url)
+            if n:
+                self.ultimo_volcado_huerfanas = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        except Exception as e:  # noqa: BLE001
+            log.warning("no se pudieron volcar las huerfanas: %s", e)
+
+
+def memoria_residente() -> Optional[int]:
+    """Memoria residente del proceso en bytes (Linux)."""
+    try:
+        with open("/proc/self/status") as f:
+            for linea in f:
+                if linea.startswith("VmRSS:"):
+                    return int(linea.split()[1]) * 1024
+    except OSError:
+        pass
+    return None
 
 
 # ------------------------------------------------------------------ autenticacion
@@ -301,12 +496,21 @@ class Autenticacion(grpc.ServerInterceptor):
 
 
 # ------------------------------------------------------------------ servicios gRPC
+def emisor_de(context) -> Optional[str]:
+    """CN del certificado de cliente, que el borde pasa en x-zenit-emisor (H-012)."""
+    for clave, valor in context.invocation_metadata() or ():
+        if clave == "x-zenit-emisor" and valor:
+            m = re.search(r"CN=([^,/]+)", valor)
+            return m.group(1) if m else None
+    return None
+
+
 class Metricas(metrics_service_pb2_grpc.MetricsServiceServicer):
     def __init__(self, nucleo: PuntoDeEntrada):
         self.nucleo = nucleo
 
     def Export(self, request, context):
-        if not self.nucleo.exportar_metricas(request):
+        if not self.nucleo.exportar_metricas(request, emisor_de(context)):
             context.abort(grpc.StatusCode.UNAVAILABLE, "almacen saturado, reintentar")
         return metrics_service_pb2.ExportMetricsServiceResponse()
 
@@ -319,13 +523,8 @@ class Trazas(trace_service_pb2_grpc.TraceServiceServicer):
         def extraer(bloque):
             for alcance in bloque.scope_spans:
                 for span in alcance.spans:
-                    yield {"traza_id": span.trace_id.hex(),
-                           "span_id": span.span_id.hex(),
-                           "padre_id": span.parent_span_id.hex(),
-                           "nombre": span.name,
-                           "inicio_ns": span.start_time_unix_nano,
-                           "fin_ns": span.end_time_unix_nano}
-        if not self.nucleo.exportar_archivo("trazas", request.resource_spans, extraer):
+                    yield fila_traza(span)
+        if not self.nucleo.exportar_senal("trazas", request.resource_spans, extraer, emisor_de(context)):
             context.abort(grpc.StatusCode.UNAVAILABLE, "no se pudo guardar, reintentar")
         return trace_service_pb2.ExportTraceServiceResponse()
 
@@ -338,10 +537,8 @@ class Registros(logs_service_pb2_grpc.LogsServiceServicer):
         def extraer(bloque):
             for alcance in bloque.scope_logs:
                 for reg in alcance.log_records:
-                    yield {"severidad": reg.severity_text,
-                           "cuerpo": valor_de(reg.body),
-                           "momento_ns": reg.time_unix_nano or reg.observed_time_unix_nano}
-        if not self.nucleo.exportar_archivo("registros", request.resource_logs, extraer):
+                    yield fila_registro(reg)
+        if not self.nucleo.exportar_senal("registros", request.resource_logs, extraer, emisor_de(context)):
             context.abort(grpc.StatusCode.UNAVAILABLE, "no se pudo guardar, reintentar")
         return logs_service_pb2.ExportLogsServiceResponse()
 
@@ -384,10 +581,14 @@ def servidor_grpc(nucleo: PuntoDeEntrada, token: str, puerto: int) -> grpc.Serve
 # ------------------------------------------------------------------ arranque
 def construir_desde_entorno() -> PuntoDeEntrada:
     salida = Path(os.environ.get("RUTA_SALIDA", "/datos/salida"))
-    nucleo = PuntoDeEntrada(
-        Catalogo(Path(os.environ.get("RUTA_CATALOGO", "/etc/zenit/catalogo/catalogo.json"))),
-        servicio_por_defecto=os.environ.get("SERVICIO_POR_DEFECTO", "host"),
-    )
+    archivo = Catalogo(Path(os.environ.get("RUTA_CATALOGO", "/etc/zenit/catalogo/catalogo.json")))
+    # H-010: con PostgreSQL configurado se resuelve contra el catalogo de la
+    # base; el archivo queda solo como respaldo si la base nunca respondio.
+    pg_url = os.environ.get("PG_URL")
+    catalogo = (CatalogoPG(pg_url, cada_s=float(os.environ.get("CATALOGO_CADA_S", "30")), respaldo=archivo)
+                if pg_url else archivo)
+    nucleo = PuntoDeEntrada(catalogo, servicio_por_defecto=os.environ.get("SERVICIO_POR_DEFECTO", "host"))
+    nucleo.contar_sin_certificado = os.environ.get("DETRAS_DEL_BORDE", "true").lower() == "true"
     c = nucleo.contadores
 
     destino = os.environ.get("DESTINO_METRICAS") or ("influx" if os.environ.get("INFLUX_URL") else "jsonl")
@@ -404,10 +605,29 @@ def construir_desde_entorno() -> PuntoDeEntrada:
         )
     else:
         nucleo.destino_metricas = DestinoJsonl(salida, "metricas", al_escribir=lambda n: None)
+    if os.environ.get("INFLUX_URL"):
+        nucleo.interno = ClienteInflux(os.environ["INFLUX_URL"], os.environ.get("INFLUX_TOKEN", ""), tiempo_limite=5.0)
+        nucleo.bd_interna = os.environ.get("INFLUX_BD_INTERNA", salud.BD_INTERNA)
 
     for senal in ("trazas", "registros"):
         nucleo.destinos_archivo[senal] = DestinoJsonl(
             salida, senal, al_escribir=lambda n, s=senal: c.sumar(s, "emitidas", n))
+    if os.environ.get("CLICKHOUSE_URL"):
+        # H-016 y H-017: el mismo destino por lotes que las metricas, con su
+        # propia cola. Un ClickHouse lento no frena a InfluxDB ni al reves.
+        ch = ClienteClickHouse(os.environ["CLICKHOUSE_URL"], os.environ.get("CLICKHOUSE_USUARIO", "zenit"),
+                               os.environ.get("CLICKHOUSE_CLAVE", ""))
+        for senal in ("registros", "trazas"):
+            nucleo.destinos_analiticos[senal] = DestinoPorLotes(
+                ch, senal,
+                al_escribir=lambda n, s=senal: c.sumar(s, "emitidas", n),
+                al_rechazar=lambda n, s=senal: c.sumar(s, "rechazadas_por_almacen", n),
+                capacidad_lineas=int(os.environ.get("CAPACIDAD_FILAS_ANALITICO", "100000")),
+                lineas_por_lote=int(os.environ.get("FILAS_POR_LOTE_ANALITICO", "5000")),
+                carpeta_rechazos=salida / "rechazadas",
+                prefijo_rechazos=senal, extension_rechazos=".jsonl",
+            )
+        nucleo.verdad = DestinoJsonl(salida, "registros", al_escribir=lambda n: None)
     return nucleo
 
 
@@ -422,6 +642,18 @@ def principal():
 
     servidor = servidor_grpc(nucleo, os.environ.get("TOKEN_INGESTA", ""), puerto_otlp)
     servidor.start()
+
+    pg_url = os.environ.get("PG_URL")
+    parar_volcado = threading.Event()
+
+    def volcar_cada_tanto():
+        vuelta = 0
+        while not parar_volcado.wait(10):
+            nucleo.volcar_salud(pg_url)
+            vuelta += 1
+            if pg_url and vuelta % 3 == 0:
+                nucleo.volcar_huerfanas(pg_url)
+    threading.Thread(target=volcar_cada_tanto, name="volcador", daemon=True).start()
     log.info("ingesta OTLP en %d, admin en %d, metricas hacia %s",
              puerto_otlp, puerto_admin, type(nucleo.destino_metricas).__name__)
 
@@ -432,6 +664,12 @@ def principal():
     log.info("deteniendo: se deja de aceptar y se vacia la cola")
     servidor.stop(grace=5).wait()
     nucleo.destino_metricas.detener(esperar_s=15)   # el compose da 30 s
+    for destino in nucleo.destinos_analiticos.values():
+        destino.detener(esperar_s=5)
+    parar_volcado.set()
+    nucleo.volcar_salud(pg_url)
+    if pg_url:
+        nucleo.volcar_huerfanas(pg_url)
     admin.shutdown()
 
 

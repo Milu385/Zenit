@@ -1,0 +1,4 @@
+# Certificados de cliente revocados, por numero de serie en hexadecimal
+# (lo imprime scripts/tls/emitir-cliente.sh). Una linea por certificado:
+#   "4A1F...C3" 1;    # zenit-nodo-do, revocado el 2026-10-12 porque ...
+# Despues de editar: docker compose exec borde nginx -s reload

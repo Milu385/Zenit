@@ -5,6 +5,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY tsconfig.json vite.config.ts index.html ./
 COPY src/ ./src/
+COPY simulado/ ./simulado/
 RUN npm run build
 
 FROM nginx:1.27-alpine

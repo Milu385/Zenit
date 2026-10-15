@@ -41,6 +41,12 @@ class Respuesta:
     # Si la agrupacion produce demasiadas lineas, se devuelven las primeras y
     # aqui se dice cuantas quedaron fuera.
     series_omitidas: int = 0
+    # Segundos que abarca cada punto: 10 en crudo; en los resumenes, el paso
+    # que deja unos 1500 puntos (H-019).
+    intervalo_s: int = 10
+    # Intervalos con datos pero con menos observaciones de las esperadas: hubo
+    # perdida y el promedio se calculo con lo que habia (H-018).
+    intervalos_incompletos: int = 0
 
 
 class ErrorConsulta(ValueError):
@@ -66,6 +72,12 @@ class RepositorioSeries(Protocol):
         filtros: Optional[Mapping[str, str]] = None,
     ) -> Respuesta:
         """La serie de una metrica para un activo y un rango."""
+
+    def volumen_fuentes(self) -> dict:
+        """{(activo, host_name, senal): {"recibidas_5min": n, "errores_1h": n}} (H-021)."""
+
+    def cpu_reciente(self, minutos: int = 5) -> dict:
+        """{activo: fraccion de CPU ocupada} en los ultimos minutos, para el inventario."""
 
     def disponible(self) -> bool:
         """True si el motor responde."""

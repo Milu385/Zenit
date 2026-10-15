@@ -2,7 +2,7 @@
 
 **Plataforma de observabilidad neutral respecto al proveedor.** Un mismo nodo observado corre idéntico en AWS, DigitalOcean, Azure o un servidor on-premise, y su telemetría llega por OpenTelemetry a un único punto de entrada que la normaliza y la asocia a un activo.
 
-Este repositorio contiene la **épica 0**, la infraestructura mínima sobre la que se construye el resto del producto, y la **épica 2**, el laboratorio de fallos que produce los datos y la verdad de referencia para evaluar la detección (sección [Laboratorio de fallos](#laboratorio-de-fallos-épica-2)).
+Este repositorio contiene la **épica 0**, la infraestructura mínima sobre la que se construye el resto del producto; la **épica 2**, el laboratorio de fallos que produce los datos y la verdad de referencia para evaluar la detección (sección [Laboratorio de fallos](#laboratorio-de-fallos-épica-2)); y la **épica 1**, la ingesta completa: catálogo de activos, las tres señales, resúmenes y autenticación mutua (sección [Épica 1](#épica-1-ingesta-completa)).
 
 | Historia | Qué entrega | Dónde vive |
 |---|---|---|
@@ -14,6 +14,13 @@ Este repositorio contiene la **épica 0**, la infraestructura mínima sobre la q
 | **H-006** · Repositorio y endpoint | Interfaz de repositorio que aísla el motor y API con la serie de una métrica | `backend/zenit/repositorio/`, `backend/zenit/api/` |
 | **H-007** · Vista de serie | Gráfica en el navegador con estados de carga, error y sin datos | `frontend/` |
 | **H-008** · Despliegue completo | Todo lo anterior desde los archivos de este repositorio | este README |
+| **H-009** · Catálogo y descubrimiento | Activos en PostgreSQL con id canónico estable; descubrimiento en DigitalOcean, Proxmox y AWS | `backend/zenit/catalogo.py`, `backend/zenit/descubrimiento/`, `docs/proveedores.md` |
+| **H-010, H-011** · Resolución y huérfanas | La ingesta resuelve contra el catálogo; lo no resuelto se lista y se reasigna después | `backend/ingesta/`, `backend/zenit/huerfanas.py` |
+| **H-012** · mTLS | Certificado de cliente por nodo, límite por emisor y registro de rechazos | `deploy/nginx.conf`, `deploy/borde/`, `docs/certificados.md` |
+| **H-016, H-017** · Registros y trazas | ClickHouse, escrito desde la ingesta, consultable por activo y ventana | `deploy/clickhouse/`, `backend/zenit/repositorio/analitico.py`, `docs/registros-y-trazas.md` |
+| **H-018 a H-020** · Resúmenes, resolución y retención | Agregador por minuto y por hora; la API elige el nivel por el rango | `backend/zenit/agregacion.py`, `backend/zenit/repositorio/` |
+| **H-021** · Salud de las fuentes | Última recepción, volumen y errores por fuente; degradada a los 5 min | `backend/zenit/salud.py`, `/api/fuentes` |
+| **H-031** · Robustez del punto de entrada | Lotes y colas configurables, límite de memoria y herramientas de medición | `deploy/compose.yml`, `laboratorio/servicios/sonda/` |
 
 ---
 
@@ -65,14 +72,22 @@ Tres principios que explican casi todas las decisiones:
 │   │   ├── repositorio/         contrato e implementación (H-006)
 │   │   ├── api/main.py          API de consulta (H-006)
 │   │   ├── verdad.py            cargador de la verdad de referencia (H-024)
-│   │   └── admin.py             crear bases, verificar, huecos, cargar-verdad, exportar
+│   │   ├── catalogo.py          catálogo de activos en PostgreSQL (H-009, H-010)
+│   │   ├── descubrimiento/      DigitalOcean, Proxmox y AWS (H-009)
+│   │   ├── huerfanas.py         reasignación de la telemetría huérfana (H-011)
+│   │   ├── salud.py             salud de las fuentes (H-021)
+│   │   ├── agregacion.py        resúmenes por minuto y por hora (H-018)
+│   │   ├── clickhouse.py        único cliente HTTP de ClickHouse (H-016, H-017)
+│   │   └── admin.py             bases, verificación, catálogo, retención, mediciones, exportar
 │   ├── pruebas/                 pytest, doble de InfluxDB, nodo simulado
 │   └── Dockerfile.api
 ├── frontend/                    vista de serie (H-007), React + uPlot
 ├── deploy/                      la plataforma (H-001, H-008)
-│   ├── compose.yml              borde, ingesta, influxdb, api, web, postgres, cargador
-│   ├── postgres/01-esquema.sql  tablas del contrato de la API (inyecciones, anomalías...)
-│   ├── nginx.conf               TLS en 4317 (gRPC) y 443 (interfaz)
+│   ├── compose.yml              borde, ingesta, influxdb, clickhouse, postgres, api, web y trabajadores
+│   ├── postgres/                tablas del contrato, catálogo, fuentes y agregación
+│   ├── clickhouse/              tablas de registros y trazas, configuración del motor
+│   ├── borde/                   modos de mTLS y certificados revocados
+│   ├── nginx.conf               mTLS en 4317 (gRPC) y TLS en 443 (interfaz)
 │   ├── catalogo/catalogo.json   identificador del nodo → activo
 │   └── .env.example
 ├── laboratorio/                 el nodo observado (H-002, H-003)
@@ -90,7 +105,8 @@ Tres principios que explican casi todas las decisiones:
 │       ├── pedidos/             FastAPI · llama a catalogo
 │       ├── catalogo/            FastAPI · lee y escribe en el almacén
 │       ├── carga/               generador de peticiones con perfil diurno (H-023)
-│       └── inyector/            fallos, verdad de referencia y campaña (H-024 a H-030)
+│       ├── inyector/            fallos, verdad de referencia y campaña (H-024 a H-030)
+│       └── sonda/               emisor para las mediciones de la ingesta (H-031)
 ├── scripts/
 │   ├── aws/                     aprovisionamiento en EC2
 │   ├── do/                      aprovisionamiento en DigitalOcean (épica 2)
@@ -102,6 +118,9 @@ Tres principios que explican casi todas las decisiones:
 └── docs/
     ├── nodos.md                 registro de nodos admitidos
     ├── esquema-medicion.md      tablas, etiquetas y campos en InfluxDB (H-005)
+    ├── proveedores.md           credenciales de solo lectura y diferencias entre proveedores
+    ├── certificados.md          mTLS: emisión, rotación, revocación y vencimientos
+    ├── registros-y-trazas.md    ClickHouse, política de descarte, consultas
     └── verificacion-epica-0.md  evidencia de cierre de la épica 0
 ```
 
@@ -118,7 +137,9 @@ Tres principios que explican casi todas las decisiones:
 | Sistema operativo | Ubuntu Server 24.04 LTS | Agente de SSM preinstalado, IMDSv2 |
 | Acceso a instancias | SSM Session Manager | Sin puerto 22 abierto, sin llaves que repartir |
 | Registro de imágenes | GHCR, paquetes públicos | Descargable desde cualquier proveedor sin credenciales |
-| Transporte | OTLP/gRPC con TLS + token | Idéntico para todos los nodos, sin peering ni rutas privadas |
+| Transporte | OTLP/gRPC con mTLS + token | Idéntico para todos los nodos, sin peering ni rutas privadas; certificado de cliente por nodo desde H-012 |
+| Identificador de activo | Asignado una vez y guardado en PostgreSQL | Estable entre ejecuciones y ante cambios del proveedor (H-009) |
+| Registros y trazas | ClickHouse, desde la ingesta | Un solo motor y la correlación como consulta (ADR-007) |
 | Certificado | CA propia, IP en el SAN | Sin dominio ni DNS; el `ca.crt` va versionado |
 | Identidad del nodo | Variable `ZENIT_NODO` | Sobrevive a la recreación del nodo; no consulta metadatos del proveedor |
 | Prefijo de nombres | `zenit-` | Para localizar y borrar recursos por etiqueta |
@@ -296,11 +317,11 @@ En el droplet, cuando exista `/var/lib/zenit-listo`:
 
 ```bash
 git clone https://github.com/Milu385/Zenit.git zenit && cd zenit/deploy
-cp .env.example .env && nano .env      # ORG_GITHUB, TOKEN_INGESTA, PG_CLAVE (openssl rand -hex 24)
+cp .env.example .env && nano .env      # ORG_GITHUB, TOKEN_INGESTA, PG_CLAVE y CH_CLAVE (openssl rand -hex 24)
 bash ../scripts/influx/preparar-token.sh
 mkdir -p tls                            # y pega servidor.crt y servidor.key como en la sección Plataforma
 docker compose --env-file .env up -d --build --wait
-docker compose ps -a                    # ocho contenedores: siete arriba e influxdb-bases terminado con código 0
+docker compose ps -a                    # los servicios arriba; influxdb-bases, postgres-esquema y clickhouse-esquema terminados con código 0
 ```
 
 El cortafuegos de DigitalOcean está fuera del droplet, así que Docker no lo
@@ -319,8 +340,9 @@ docker compose --env-file entornos/digitalocean.env \
   --profile completo --profile carga --profile observado --profile laboratorio up -d --build --wait
 ```
 
-Y en la plataforma, agrega `"zenit-nodo-do": "activo-do-nodo-01"` a
-`deploy/catalogo/catalogo.json`. La ingesta lo relee sola.
+El descubridor de la plataforma lo encuentra solo por la etiqueta `zenit-nodo`
+(épica 1). Sin descubrimiento configurado, se admite a mano:
+`docker compose exec api python -m zenit.admin catalogo admitir zenit-nodo-do activo-do-nodo-01 --proveedor digitalocean`.
 
 ### Nodo on-premise en el Proxmox
 
@@ -346,7 +368,9 @@ docker compose -f compose.yml -f compose.onprem.yml --env-file entornos/onprem.e
   --profile completo --profile carga --profile observado --profile laboratorio up -d --build --wait
 ```
 
-Y en el catálogo, `"zenit-nodo-onprem": "activo-onprem-nodo-01"`. Si la red del
+Y en el catálogo: la VM con la etiqueta `zenit-nodo` la encuentra el
+descubridor (`docs/proveedores.md`), o a mano con
+`zenit.admin catalogo admitir zenit-nodo-onprem activo-onprem-nodo-01 --proveedor proxmox`. Si la red del
 Proxmox sale con IP dinámica, cada cambio corta el nodo hasta admitir la IP
 nueva y retirar la vieja con `scripts/do/retirar.sh 4317 <ip-vieja>`.
 
@@ -444,6 +468,121 @@ hasta que H-017 les dé un almacén.
 
 ---
 
+## Épica 1: ingesta completa
+
+```
+  nodos ──4317 (OTLP, mTLS + token)──▶ borde ──▶ ingesta ──▶ influxdb   zenit_raw ─agregador─▶ zenit_1m ─▶ zenit_1h
+                                        │           ├──────▶ clickhouse registros y trazas (7 días)
+                                        │           ├──────▶ postgres   fuentes y huérfanas (cada 10 s)
+                                        │           └─verdad─▶ archivo ─cargador─▶ postgres inyecciones
+                                        └─ rechazos con su origen
+  descubridor ──APIs de solo lectura──▶ DigitalOcean, Proxmox, AWS ──▶ postgres activos, claves_nativas
+```
+
+### Actualizar una plataforma que ya corre
+
+Las tablas nuevas de PostgreSQL y de ClickHouse las aplican los servicios
+`postgres-esquema` y `clickhouse-esquema` en cada arranque; no hace falta
+borrar volúmenes. `catalogo.json` se importa al catálogo conservando los ids.
+La guía de implementación de la épica 1 tiene el orden completo: primero la
+plataforma, después los nodos.
+
+```bash
+cd ~/zenit/deploy && nano .env    # CH_CLAVE, MTLS_MODO=transicion, VERSION_API=0.4.0, VERSION_INGESTA=0.4.0, credenciales de descubrimiento
+docker compose --env-file .env up -d --build --wait
+docker compose logs postgres-esquema clickhouse-esquema
+```
+
+### Catálogo, descubrimiento y huérfanas (H-009 a H-011)
+
+```bash
+docker compose exec api python -m zenit.admin catalogo listar         # activos, claves y última pasada por proveedor
+docker compose logs descubridor --tail 20
+docker compose exec api python -m zenit.admin asociar-huerfanas       # tambien lo hace el descubridor en cada pasada
+```
+
+En la API: `/api/activos`, `/api/activos/{id}`, `/api/catalogo/descubrimientos`
+y `/api/fuentes/huerfanas`. Credenciales y diferencias entre proveedores:
+`docs/proveedores.md`.
+
+### Salud de las fuentes (H-021)
+
+`/api/fuentes`: cada fuente con su última recepción, lo recibido en 5 minutos y
+los errores de la última hora. Más de 5 minutos sin métricas es `degradado`, y
+la serie de ese activo lo avisa (`fuente_degradada`).
+
+### Registros y trazas (H-016, H-017)
+
+`/api/activos/{id}/registros`, `/trazas`, `/correlacion` y `/api/trazas/{id}`.
+Esquema, política de descarte y la nota sobre recolección nativa:
+`docs/registros-y-trazas.md`.
+
+### Resúmenes, resolución y retención (H-018 a H-020)
+
+```bash
+docker compose logs agregador --tail 5                       # una linea por ciclo, con el retraso
+docker compose exec api python -m zenit.admin agregacion     # hasta donde llega cada nivel
+docker compose exec api python -m zenit.admin retencion      # cada base descarta lo que paso su ventana
+docker compose exec api python -m zenit.admin espacio        # archivos y MiB por base
+```
+
+Hasta 24 horas la API responde con los datos crudos; hasta 30 días, con el
+resumen por minuto; más, con el de hora. La respuesta lo declara en
+`resolucion` e `intervalo_s`.
+
+### Autenticación mutua (H-012)
+
+Procedimiento completo, rotación, revocación y vencimientos:
+`docs/certificados.md`. En corto: `bash scripts/tls/emitir-cliente.sh <nodo>`
+en tu PC, los dos archivos al nodo, `RUTA_CERT_CLIENTE` y `RUTA_CLAVE_CLIENTE`
+en su `.env`, y cuando todos los nodos lo tengan, `MTLS_MODO=estricto`.
+
+### Mediciones (H-031, P-REN-01, P-REN-02)
+
+```bash
+# en el nodo: la sonda emite por el agente, por el mismo camino que la telemetria real
+docker compose --env-file entornos/<entorno>.env --profile observado --profile medicion run --rm sonda latencia --n 360
+# en la plataforma, al mismo tiempo
+docker compose exec api python -m zenit.admin medir-latencia <activo> --minutos 60 --salida /tmp/latencia.csv
+```
+
+`sonda completitud` con `zenit.admin contar` mide P-REN-02, y
+`zenit.admin informe-ingesta` da la memoria y la contrapresión de la ingesta en
+la misma ventana.
+
+---
+
+## Plataforma y nodo en Azure
+
+Desde el 14 de octubre la plataforma corre en una VM de Azure (cuenta Azure for
+Students) y Azure es además un entorno observado, con su nodo y su
+descubrimiento (H-014, H-009d). El compose es el mismo; cambian el
+aprovisionamiento y tres variables del `.env`.
+
+```bash
+az login
+bash scripts/azure/00-verificar.sh        # regiones permitidas, tamanos y cuota; no crea nada
+bash scripts/azure/01-red.sh              # grupo, dos redes y sus NSG (22 solo a tu IP)
+bash scripts/azure/02-plataforma.sh       # VM de 8 GiB, IP estatica, identidad con rol Reader
+bash scripts/azure/03-nodo.sh             # zenit-nodo-azure, etiqueta zenit=nodo, admitido en el 4317
+bash scripts/azure/abrir-equipo.sh <ip> <nombre>
+```
+
+| | Plataforma | Nodo |
+|---|---|---|
+| Tamaño | `Standard_B2as_v2` (2 vCPU, 8 GiB) | `Standard_B2als_v2` (2 vCPU, 4 GiB) |
+| Disco | 64 GB SSD estándar | 30 GB SSD estándar |
+| Red | `zenit-plataforma-red` 10.70.0.0/16 | `zenit-nodo-red` 10.71.0.0/16 |
+| Entradas | 22 y 443 del equipo, 4317 de los nodos admitidos | 22 del equipo |
+| Identidad | Administrada, rol `Reader` sobre el grupo | Ninguna |
+
+Los NSG están fuera de la VM, igual que el cortafuegos de DigitalOcean, así
+que Docker no los puede saltar. En el `.env` de la plataforma:
+`ZENIT_PROVEEDOR=azure`, `DESCUBRIR_AZURE=1`, `AZURE_SUSCRIPCION` y
+`AZURE_GRUPO`. Detalle de la credencial y su demostración: `docs/proveedores.md`,
+sección 5. `scripts/azure/apagar.sh` desasigna las VM para no gastar crédito
+fuera de la campaña.
+
 ## Perfiles del nodo
 
 | Comando | Qué levanta |
@@ -492,7 +631,11 @@ Los cuatro archivos de `laboratorio/entornos/` son idénticos salvo estas línea
 | `scripts/do/abrir-equipo.sh` | Recurrente | Abre el 443 y el 22 a la IP de un integrante |
 | `scripts/do/retirar.sh` | Ocasional | Quita una IP de un puerto (un nodo que cambió de IP) |
 | `scripts/do/userdata-docker.sh` | No se ejecuta a mano | Lo corre el droplet al nacer; sirve también para la VM del Proxmox |
+| `scripts/azure/*.sh` | Una vez | Aprovisionamiento en Azure: verificar la suscripción, red, plataforma, nodo, admitir nodos y abrir el equipo |
 | `scripts/exportar.sh` | Diario | En la plataforma: datos del laboratorio para la evaluación |
+| `scripts/tls/emitir-cliente.sh <nodo>` | Recurrente | Certificado de cliente de un nodo (H-012). Exige `tls/ca.key` |
+| `scripts/influx/espacio.sh` | Ocasional | Espacio de cada base medido en disco, si `zenit.admin espacio` no responde |
+| `scripts/instantanea-nodo.sh` | Recurrente | Instantánea de configuración de un nodo para el reporte de configuraciones (ver `NOTAS.md`) |
 
 ---
 
@@ -504,6 +647,8 @@ Los cuatro archivos de `laboratorio/entornos/` son idénticos salvo estas línea
 | `tls/servidor.key` | Clave privada del borde | En `deploy/tls/` de la instancia de la plataforma |
 | `deploy/.env`, `laboratorio/entornos/*.env` | Contienen el token y la clave del almacén | En cada máquina, creados desde su `.example` |
 | `deploy/secretos/influx-admin.json` | Token de administración de InfluxDB | Solo en la instancia de la plataforma |
+| `tls/clientes/*.key`, `laboratorio/agente/cliente/` | Claves de cliente de los agentes (H-012) | La emitida en tu equipo y la copia en su nodo |
+| `deploy/secretos/descubrimiento/` | Credenciales de la sesión de AWS y CA del Proxmox | Solo en la plataforma |
 
 > **`tls/ca.key` es irreemplazable.** Si se pierde, hay que generar una CA nueva, reemitir el certificado y distribuir el `ca.crt` nuevo a todos los nodos.
 
@@ -686,6 +831,13 @@ Las pruebas del cargador contra PostgreSQL se saltan salvo que haya una base
 de pruebas vacía, que borran y recrean:
 `ZENIT_PG_PRUEBAS=postgresql://usuario@127.0.0.1:5432/zenit_pruebas python -m pytest pruebas/`.
 
+Las de registros y trazas necesitan un ClickHouse 24.8, que vacían:
+
+```bash
+docker run -d --rm --name ch-pruebas -p 18123:8123 clickhouse/clickhouse-server:24.8
+ZENIT_CH_PRUEBAS=http://127.0.0.1:18123 python -m pytest pruebas/test_analitico.py
+```
+
 Las del laboratorio corren aparte, porque el laboratorio no importa nada del
 backend:
 
@@ -707,6 +859,14 @@ INFLUX_URL=http://127.0.0.1:18181 INFLUX_TOKEN=apiv3_prueba RUTA_CATALOGO=../dep
 python pruebas/nodo_simulado.py --destino 127.0.0.1:14317 --relleno-min 20 --cada 2 --escalon-tras 60 &
 cd ../frontend && npm install && npm run dev       # http://localhost:5173
 ```
+
+La API pide sesión en todas las rutas salvo `/api/salud` y `/api/sesion`, y
+sin `PG_URL` no hay usuarios con los que entrar. Para la API real en local,
+levanta un PostgreSQL, aplica `deploy/postgres/01-esquema.sql` y
+`05-gobernanza.sql`, exporta `PG_URL` y crea un usuario con
+`python -m zenit.gobernanza.usuarios crear <usuario> <rol>`. Para trabajar
+solo en la interfaz, `npm run dev:simulado` sirve todas las rutas del
+contrato sin backend. Usuarios, escenarios y decisiones de diseño: `NOTAS.md`.
 
 El doble no verifica retención, persistencia ni rendimiento: eso se verifica
 contra el motor real en la plataforma, con los comandos de la sección de

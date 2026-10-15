@@ -32,3 +32,35 @@ export function SinDatos({ titulo, detalle }: { titulo: string; detalle: string 
     </div>
   );
 }
+
+// Los otros dos estados transversales de pantallas-wireframe: sin permiso y
+// datos desactualizados. Vacio es SinDatos con el texto de cada pantalla.
+
+export function SinPermiso({ que, mensaje }: { que: string; mensaje?: string }) {
+  return (
+    <div className="estado estado-sin-permiso" role="status">
+      <span className="estado-icono" aria-hidden="true">
+        &#128274;
+      </span>
+      <p className="estado-titulo">Tu rol no da acceso a {que}</p>
+      <p>{mensaje ?? "Si lo necesitas, pidele al administrador que revise tu rol."}</p>
+    </div>
+  );
+}
+
+export function AvisoDesactualizado({ desde, motivo, reintentar }: { desde: Date | null; motivo: string; reintentar?: () => void }) {
+  return (
+    <div className="aviso-desactualizado" role="status">
+      <span aria-hidden="true">&#9888;</span>
+      <span>
+        <strong>Datos desactualizados.</strong> Lo que ves es de {desde ? desde.toLocaleTimeString() : "antes"}; no se
+        pudo actualizar: {motivo}
+      </span>
+      {reintentar && (
+        <button type="button" className="boton-texto" onClick={reintentar}>
+          Reintentar
+        </button>
+      )}
+    </div>
+  );
+}

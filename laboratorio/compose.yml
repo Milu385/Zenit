@@ -47,6 +47,8 @@ services:
       ALMACEN_BD:      ${ALMACEN_BD:-zenit}
       OTEL_SERVICE_NAME: catalogo
       OTEL_TRACES_EXPORTER: ${EXPORTADOR_TRAZAS:-none}
+      OTEL_LOGS_EXPORTER: ${EXPORTADOR_REGISTROS:-none}
+      OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://agente:4317
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/salud')\""]
@@ -70,6 +72,8 @@ services:
       URL_CATALOGO: http://catalogo:8000
       OTEL_SERVICE_NAME: pedidos
       OTEL_TRACES_EXPORTER: ${EXPORTADOR_TRAZAS:-none}
+      OTEL_LOGS_EXPORTER: ${EXPORTADOR_REGISTROS:-none}
+      OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://agente:4317
     ports:
       - "${IP_PEDIDOS:-127.0.0.1}:8000:8000"   # on-premise la cambia por variable
@@ -97,6 +101,15 @@ services:
     volumes:
       - ./perfiles:/perfiles:ro
     profiles: ["carga"]
+
+  # Emisor de prueba para las mediciones de la ingesta (P-REN-01, P-REN-02,
+  # H-016, H-031). No corre solo: se lanza con "run --rm sonda <modo>".
+  sonda:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-sonda:${VERSION_APP:-0.2.0}
+    build: ./servicios/sonda
+    init: true
+    depends_on: [agente]
+    profiles: ["medicion"]
 
   # Inyector de fallos y campana desatendida (epica 2). Opera solo sobre este
   # nodo: no tiene red (network_mode: none), asi que no puede alcanzar la
@@ -139,9 +152,12 @@ services:
       RUTA_CA:          ${RUTA_CA:-/etc/otelcol/ca.crt}
       TOKEN_INGESTA:    ${TOKEN_INGESTA:?falta el token de ingesta}
       INTERVALO_METRICAS: ${INTERVALO_METRICAS:-10s}
+      RUTA_CERT_CLIENTE:  ${RUTA_CERT_CLIENTE:-}
+      RUTA_CLAVE_CLIENTE: ${RUTA_CLAVE_CLIENTE:-}
     volumes:
       - ./agente/collector.yaml:/etc/otelcol/collector.yaml:ro
       - ./agente/ca.crt:/etc/otelcol/ca.crt:ro   # publico: va versionado
+      - ./agente/cliente:/etc/otelcol/cliente:ro # certificado y clave de ESTE nodo: no se versionan
       - agente_cola:/var/lib/otelcol/cola
       - verdad:/var/lib/zenit-lab:ro               # verdad de referencia del inyector
       - /:/hostfs:ro,rslave

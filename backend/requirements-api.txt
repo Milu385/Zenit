@@ -3,3 +3,5 @@ uvicorn==0.52.4
 httpx==0.28.1
 psycopg[binary]==3.3.6
 pyarrow==25.0.1
+boto3==1.43.110
+bcrypt==5.0.0

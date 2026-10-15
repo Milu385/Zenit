@@ -1,0 +1,12 @@
+{
+  "puertos_esperados": {
+    "*": [22],
+    "plataforma": [443, 4317]
+  },
+  "puertos_sensibles": [5432, 8000, 8080, 8181],
+  "root_permitido": {
+    "agente": "lee /proc de todos los procesos del anfitrion y escribe en su cola (laboratorio/compose.yml)",
+    "inyector": "detiene y levanta servicios del nodo con el socket de Docker (laboratorio/compose.yml)"
+  },
+  "version_agente_esperada": ""
+}
