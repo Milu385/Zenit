@@ -88,3 +88,4 @@ red. Esta tabla es el lugar donde se mira.
 | Nodo | Serie | Emitido | Vence | Estado |
 |---|---|---|---|---|
 | (borde) zenit-ingesta | ver `openssl x509 -in deploy/tls/servidor.crt -noout -serial -enddate` | | | vigente |
+| zenit-nodo-azure | 6B41E4AC0F13AC39C10C0BC6D0C96021093CB503 | 2026-10-16 | 2027-11-20 | vigente |
