@@ -27,7 +27,7 @@ az vm list-skus -l "$REGION" --resource-type virtualMachines -o tsv \
   > /tmp/zenit-skus.tsv
 for t in "$TAMANO_PLATAFORMA" "$TAMANO_NODO"; do
   fila="$(awk -F'\t' -v t="$t" '$1 == t' /tmp/zenit-skus.tsv)"
-  if [ -z "$fila" ]; then echo "  $t: NO existe en $REGION"
+  if [ -z "$fila" ]; then echo "  $t: no se pudo comprobar (el catalogo vino vacio; ver probar-capacidad.sh)"
   elif [ -n "$(cut -f2 <<<"$fila")" ]; then echo "  $t: restringido en $REGION ($(cut -f2 <<<"$fila"))"
   else echo "  $t: disponible"; fi
 done
@@ -39,7 +39,11 @@ az vm list-usage -l "$REGION" -o table \
 
 cat <<FIN
 
-Si algo sale "restringido", "NO existe" o la cuota no alcanza:
+La capacidad real solo se ve al desplegar: en pruebas gratuitas Azure responde
+"SkuNotAvailable ... Capacity Restrictions" aunque haya cuota. Para buscar una
+region con capacidad sin crear nada:  bash scripts/azure/probar-capacidad.sh
+
+Si algo sale "restringido" o la cuota no alcanza:
   export REGION=<otra de las permitidas>          y vuelve a correr este script, o
   export TAMANO_PLATAFORMA=Standard_B2ms TAMANO_NODO=Standard_B2s   (serie B clasica)
 FIN
