@@ -1,0 +1,6 @@
+# Falsos positivos de gitleaks (regla generic-api-key), revisados el 2026-10-16
+# para P-SEG-02. Ninguno es un secreto: son nombres de variables de ejemplo.
+#   DESCUBRIR_AWS=1 en el mensaje de ayuda del descubridor
+75aa32af8bd227c22d9989d7c9204641a86aa2cb:backend/zenit/descubrimiento/__main__.py:generic-api-key:63
+#   DO_TOKEN= vacio y DO_ETIQUETA=zenit-nodo en la plantilla .env.example
+71f9a7b6b1766a08a3d5712f41e0336c5079e4f6:deploy/.env.example:generic-api-key:43
