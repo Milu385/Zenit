@@ -1,0 +1,4 @@
+pandas>=3.0
+numpy>=2.5
+matplotlib>=3.11
+jupyter>=1.0
