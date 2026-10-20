@@ -29,3 +29,12 @@ laboratorio/agente/cliente/
 
 # paquetes de Python descargados por error
 *.whl
+
+# metadatos de carpeta de macOS
+.DS_Store
+
+# modelos entrenados: se regeneran ejecutando los cuadernos de Modelos/.
+# El objeto de resultados de statsmodels pesa unos 19 MB y es fragil entre
+# versiones de la biblioteca; lo que se versiona es el cuaderno y su
+# especificacion en JSON.
+*.pkl
