@@ -12,7 +12,9 @@ hace test_agregacion.py.
 import random
 from datetime import datetime, timedelta, timezone
 
+from zenit.deteccion.cierre import NORMALIDAD_PARA_CERRAR, momento_de_cierre
 from zenit.deteccion.detector import (
+    PERSISTENCIA_DEFECTO,
     Z_CRITICO,
     Z_NORMAL,
     Baseline,
@@ -21,6 +23,7 @@ from zenit.deteccion.detector import (
     detectar_eventos,
     evaluar_senal,
     puntaje_z,
+    severidad,
     version_modelo,
 )
 from zenit.deteccion.senales import ACUMULADA, MEDIDA, SENALES, Senal, a_tasa, preparar
@@ -273,6 +276,8 @@ ACTIVO = "activo-azure-nodo-01"
 class _FalsoCursor:
     def __init__(self, conexion):
         self.conexion = conexion
+        self.rowcount = 0
+        self._filas: list = []
 
     def __enter__(self):
         return self
@@ -281,16 +286,27 @@ class _FalsoCursor:
         return False
 
     def execute(self, sql, params=None):
-        if sql.lstrip().startswith("INSERT"):
+        limpio = sql.lstrip()
+        if limpio.startswith("INSERT"):
             self.conexion.inserts.append(params)
+        elif limpio.startswith("UPDATE"):
+            self.conexion.cerradas.append(params)
+            self.rowcount = 1
+        elif limpio.startswith("SELECT id,"):      # cierre.abiertas
+            self._filas = list(self.conexion.filas_abiertas)
+
+    def fetchall(self):
+        return self._filas
 
     def fetchone(self):
         return (1,) if self.conexion.hay_abierta else None
 
 
 class _FalsaConexion:
-    def __init__(self, hay_abierta=False):
+    def __init__(self, hay_abierta=False, filas_abiertas=()):
         self.inserts: list = []
+        self.cerradas: list = []
+        self.filas_abiertas = list(filas_abiertas)
         self.hay_abierta = hay_abierta
         self.commits = 0
 
@@ -401,6 +417,46 @@ def test_ciclo_no_duplica_una_anomalia_ya_abierta(monkeypatch):
     assert conexion.inserts == []
 
 
+def test_ciclo_no_abre_si_la_fuente_esta_degradada(monkeypatch):
+    """Cuarto criterio de H-033: una fuente callada no es una anomalia del
+    activo. La regla de degradado es la de zenit.salud, no una copia."""
+    from zenit import salud
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    callada = INICIO - salud.DEGRADADA_TRAS - timedelta(minutes=1)
+    monkeypatch.setattr(salud, "fuentes_pg", lambda c: [
+        {"activo": ACTIVO, "host_name": "h", "senal": salud.SENAL_LATIDO, "ultima": callada},
+    ])
+    repo = _FalsoRepositorio(["system_memory_utilization"], saturada="system_memory_utilization")
+
+    resumen = Detector(repo, "postgresql://doble").ciclo(ahora=INICIO)
+
+    assert resumen["degradados"] == 1
+    assert resumen["anomalias_abiertas"] == 0
+    assert conexion.inserts == []
+    assert repo.consultas == []        # ni se consulta la serie
+
+
+def test_ciclo_si_abre_cuando_la_fuente_reporta(monkeypatch):
+    from zenit import salud
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    monkeypatch.setattr(salud, "fuentes_pg", lambda c: [
+        {"activo": ACTIVO, "host_name": "h", "senal": salud.SENAL_LATIDO,
+         "ultima": INICIO - timedelta(seconds=20)},
+    ])
+    repo = _FalsoRepositorio(["system_memory_utilization"], saturada="system_memory_utilization")
+
+    resumen = Detector(repo, "postgresql://doble").ciclo(ahora=INICIO)
+
+    assert resumen["degradados"] == 0
+    assert resumen["anomalias_abiertas"] == 1
+
+
 def test_revisar_catalogo_reporta_los_dos_sentidos(monkeypatch):
     """Un nombre equivocado sale como senal que falta y, al lado, como
     metrica que llega sin vigilancia."""
@@ -416,3 +472,152 @@ def test_revisar_catalogo_reporta_los_dos_sentidos(monkeypatch):
     assert estados["system_memory_utilization[state=used]"] == "ok"
     assert estados["system_cpu_utilization[state=user]"] == "falta la metrica"
     assert informe["sin_vigilar"] == {ACTIVO: ["una_metrica_nueva"]}
+
+
+# ------------------------------------------------------------ H-033: severidad
+def test_severidad_usa_los_cortes_del_cuaderno():
+    """Los dos incrementos son los mismos que separan bueno/normal/critico
+    (1.5 y 3.5), aplicados por encima del corte critico."""
+    assert severidad(Z_CRITICO) == "baja"
+    assert severidad(4.9) == "baja"
+    assert severidad(5.0) == "media"            # 3.5 + 1.5
+    assert severidad(6.9) == "media"
+    assert severidad(7.0) == "alta"             # 3.5 + 3.5
+    assert severidad(900.0) == "alta"
+
+
+def test_severidad_sigue_al_corte_critico_si_se_ajusta():
+    """Un administrador que mueva el corte critico (HU-52) mueve con el toda
+    la escala de severidad, sin numeros nuevos."""
+    assert severidad(5.0, z_critico=5.0) == "baja"
+    assert severidad(6.5, z_critico=5.0) == "media"
+    assert severidad(8.5, z_critico=5.0) == "alta"
+
+
+# -------------------------------------------------------------- H-033: cierre
+LINEA_BASE = {"mediana": 10.0, "escala": 0.5}    # z = 3.5 en 11.75
+
+
+def _normales(n):
+    return _serie([10.0] * n)
+
+
+def test_no_cierra_mientras_la_desviacion_sigue():
+    puntos = _serie([10.0] * 5 + [40.0] * 20)    # sigue muy por encima
+    assert momento_de_cierre(puntos, 10.0, 0.5, normalidad=15) is None
+
+
+def test_cierra_cuando_lleva_el_tiempo_exigido_en_normal():
+    puntos = _serie([40.0] * 10 + [10.0] * 15)   # 15 minutos seguidos normales
+    fin = momento_de_cierre(puntos, 10.0, 0.5, normalidad=15)
+    assert fin == puntos[-1][0]
+
+
+def test_no_cierra_con_normalidad_mas_corta_que_la_exigida():
+    puntos = _serie([40.0] * 10 + [10.0] * 14)   # uno menos
+    assert momento_de_cierre(puntos, 10.0, 0.5, normalidad=15) is None
+
+
+def test_la_falta_de_datos_no_es_normalidad():
+    """Con menos puntos que los exigidos no se afirma que la desviacion ceso."""
+    assert momento_de_cierre(_normales(5), 10.0, 0.5, normalidad=15) is None
+    assert momento_de_cierre([], 10.0, 0.5, normalidad=15) is None
+
+
+def test_cierra_contra_la_linea_base_congelada_no_contra_una_nueva():
+    """El hallazgo que motiva todo `cierre.py`: un escalon sostenido hace que
+    una ventana movil lo declare normal a la media hora. Contra la linea base
+    congelada al abrir, el mismo escalon sigue siendo desviacion."""
+    sostenido = _serie([40.0] * 40)              # 40 minutos al nivel del fallo
+
+    # congelada (lo que hace el cierre): no cierra
+    assert momento_de_cierre(sostenido, 10.0, 0.5, normalidad=15) is None
+
+    # recalculada sobre los propios puntos del fallo: la declararia normal
+    movil = calcular_baseline([v for _, v in sostenido[-16:-1]])
+    assert momento_de_cierre(sostenido, movil.mediana, movil.escala or 1.0, normalidad=15) is not None
+
+
+def test_degradacion_intermitente_no_cierra_entre_rebotes():
+    """Tercer criterio de H-033: si rebota antes de completar el tiempo de
+    normalidad, la anomalia sigue abierta y no se abre otra nueva."""
+    rebotes = []
+    for _ in range(4):
+        rebotes += [40.0] * 3 + [10.0] * 8       # 8 minutos normales, menos de 15
+    assert momento_de_cierre(_serie(rebotes), 10.0, 0.5, normalidad=15) is None
+
+
+def test_el_tiempo_de_cierre_cabe_en_el_hueco_de_la_campana():
+    """La campana garantiza 45 minutos de normalidad entre inyecciones
+    (`normal_min` en campana.py). El tiempo exigido tiene que ser bastante
+    menor, o dos inyecciones seguidas se funden en una sola anomalia."""
+    assert NORMALIDAD_PARA_CERRAR < 45 / 2
+    assert NORMALIDAD_PARA_CERRAR > PERSISTENCIA_DEFECTO * 2
+
+
+# ------------------------------------------------- H-033: cierre en el ciclo
+def _fila_abierta(**cambios):
+    """Una fila de `anomalias` sin cerrar, en el orden de columnas que lee
+    cierre.abiertas: asi la prueba ejercita ese parseo de verdad."""
+    datos = {"id": 7, "activo": ACTIVO, "metrica": "system_memory_utilization",
+             "dimensiones": {"state": "used"}, "inicio": INICIO, "estado": "detectada",
+             "evidencia": {"clase": "medida", "linea_base": dict(LINEA_BASE)}}
+    datos.update(cambios)
+    return tuple(datos[c] for c in ("id", "activo", "metrica", "dimensiones",
+                                    "inicio", "estado", "evidencia"))
+
+
+def test_ciclo_cierra_la_anomalia_que_volvio_a_normal(monkeypatch):
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion(filas_abiertas=[_fila_abierta()])
+    _conectado(monkeypatch, conexion)
+    repo = _FalsoRepositorio(["system_memory_utilization"])     # serie plana: normal
+
+    resumen = Detector(repo, "postgresql://doble").ciclo(ahora=INICIO)
+
+    assert resumen["anomalias_cerradas"] == 1
+    assert conexion.cerradas and conexion.cerradas[0][1] == 7
+
+
+def test_ciclo_no_cierra_si_la_fuente_esta_degradada(monkeypatch):
+    """Sin datos no se puede afirmar que la desviacion ceso."""
+    from zenit import salud
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion(filas_abiertas=[_fila_abierta()])
+    _conectado(monkeypatch, conexion)
+    callada = INICIO - salud.DEGRADADA_TRAS - timedelta(minutes=1)
+    monkeypatch.setattr(salud, "fuentes_pg", lambda c: [
+        {"activo": ACTIVO, "host_name": "h", "senal": salud.SENAL_LATIDO, "ultima": callada},
+    ])
+    repo = _FalsoRepositorio(["system_memory_utilization"])
+
+    resumen = Detector(repo, "postgresql://doble").ciclo(ahora=INICIO)
+
+    assert resumen["anomalias_cerradas"] == 0
+    assert conexion.cerradas == []
+
+
+def test_ciclo_no_cierra_una_anomalia_sin_linea_base(monkeypatch):
+    """Una fila vieja sin `linea_base` en su evidencia no se cierra sola: se
+    avisa, en vez de recalcular una ventana que mentiria."""
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion(filas_abiertas=[_fila_abierta(evidencia={"clase": "medida"})])
+    _conectado(monkeypatch, conexion)
+    repo = _FalsoRepositorio(["system_memory_utilization"])
+
+    assert Detector(repo, "postgresql://doble").ciclo(ahora=INICIO)["anomalias_cerradas"] == 0
+    assert conexion.cerradas == []
+
+
+def test_un_hueco_de_datos_no_cuenta_como_normalidad():
+    """Quince puntos normales con un corte de datos en medio no son quince
+    minutos seguidos de normalidad."""
+    seguidos = _serie([40.0] * 5 + [10.0] * 15)
+    assert momento_de_cierre(seguidos, 10.0, 0.5, normalidad=15) is not None
+
+    # los mismos 15 puntos normales, pero los ultimos 5 llegan media hora despues
+    con_hueco = seguidos[:15] + [(t + timedelta(minutes=30), v) for t, v in seguidos[15:]]
+    assert momento_de_cierre(con_hueco, 10.0, 0.5, normalidad=15) is None

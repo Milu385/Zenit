@@ -89,8 +89,10 @@ def principal(argv=None) -> int:
         t0 = time.monotonic()
         try:
             r = detector.ciclo()
-            print(f"{datetime.now(timezone.utc):%H:%M:%S} {r['activos']} activos, "
-                  f"{r['senales']} senales, {r['anomalias_abiertas']} anomalias abiertas", flush=True)
+            degradados = f", {r['degradados']} con la fuente callada" if r["degradados"] else ""
+            print(f"{datetime.now(timezone.utc):%H:%M:%S} {r['activos']} activos{degradados}, "
+                  f"{r['senales']} senales, {r['anomalias_abiertas']} abiertas, "
+                  f"{r['anomalias_cerradas']} cerradas", flush=True)
         except Exception:  # noqa: BLE001 - un ciclo fallido se repite en el siguiente
             log.exception("ciclo fallido")
         if not args.cada:

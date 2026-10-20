@@ -7,16 +7,24 @@ El punto de entrada esta en `__main__.py`, como en zenit.descubrimiento:
 
 Cada ciclo (mismo patron que zenit.agregacion.Agregador):
 
-1. Lista los activos vigentes en el catalogo (zenit.catalogo.listar_activos).
-2. Para cada activo y cada senal del catalogo (zenit.deteccion.senales),
+1. Mira que fuentes estan reportando (zenit.salud, la misma regla que
+   responde `GET /api/fuentes`). Un activo cuya fuente se callo no genera
+   anomalias por eso (H-033, cuarto criterio).
+2. Cierra las anomalias cuya serie volvio a lo normal el tiempo exigido
+   (zenit.deteccion.cierre, H-033).
+3. Lista los activos vigentes en el catalogo (zenit.catalogo.listar_activos).
+4. Para cada activo y cada senal del catalogo (zenit.deteccion.senales),
    lee su serie por la capa de repositorio (RepositorioSeries.serie, nunca
    SQL directo a InfluxDB) a resolucion de 1 minuto.
-3. Aplica la linea base por activo (mediana + MAD, cortes 1.5 / 3.5 de
+5. Aplica la linea base por activo (mediana + MAD, cortes 1.5 / 3.5 de
    Iglewicz & Hoaglin) del cuaderno `Modelo criticidad`, serie por serie.
-4. Abre una anomalia solo si la regla de persistencia se cumple: PERSISTENCIA
+6. Abre una anomalia solo si la regla de persistencia se cumple: PERSISTENCIA
    puntos seguidos fuera de rango, nunca un pico aislado (criterio 3 de
-   H-032). Si ya hay una anomalia abierta para ese (activo, metrica,
-   dimensiones), no abre otra: seguir abierta o cerrarla es trabajo de H-033.
+   H-032). Si ya hay una anomalia en curso para ese (activo, metrica,
+   dimensiones), no abre otra.
+
+La severidad con la que se abre (H-033, primer criterio) esta mas abajo, en
+`severidad`; el cierre automatico y su justificacion, en `cierre.py`.
 
 Que se vigila y con que dimensiones esta en `senales.py`, no aqui: este
 archivo no sabe nada de metricas concretas. Lo de alla tambien explica por
@@ -38,8 +46,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Mapping, Optional, Sequence
 
-from zenit import catalogo
-from zenit.deteccion.senales import SENALES, Senal, preparar, puntos_extra
+from zenit import catalogo, salud
+from zenit.deteccion import cierre
+from zenit.deteccion.senales import ACUMULADA, SENALES, Senal, a_tasa, preparar, puntos_extra
 from zenit.repositorio.contrato import ErrorConsulta, RepositorioSeries
 
 log = logging.getLogger("zenit.deteccion")
@@ -127,12 +136,30 @@ def clasificar(z: float, z_normal: float = Z_NORMAL, z_critico: float = Z_CRITIC
     return "bueno"
 
 
-def _severidad(z: float, z_critico: float) -> str:
-    """Provisional (H-033 define el criterio final de severidad). Reutiliza el
-    mismo paso de 1.5/3.5 del cuaderno, ahora por encima del corte critico."""
-    if z >= z_critico + 3.5:
+# Severidad (H-033, primer criterio). Los dos incrementos son los mismos que
+# el cuaderno usa para separar bueno, normal y critico (1.5 y 3.5), aplicados
+# ahora por encima del corte critico. Asi la escala de severidad no introduce
+# numeros nuevos: una anomalia es `baja` mientras este en el primer tramo
+# despues del corte, `media` pasado un incremento normal mas, y `alta` pasado
+# un incremento critico mas.
+#
+#   baja    3.5 <= z < 5.0     (z_critico, z_critico + 1.5)
+#   media   5.0 <= z < 7.0     (z_critico + 1.5, z_critico + 3.5)
+#   alta           z >= 7.0    (z_critico + 3.5)
+#
+# La severidad se fija al abrir y no se recalcula: describe con que fuerza
+# irrumpio la desviacion, que es lo que el operador necesita para priorizar.
+# Como el puntaje queda guardado en la fila, un criterio distinto se puede
+# recalcular despues sobre lo ya detectado sin volver a correr nada.
+PASO_SEVERIDAD_MEDIA = 1.5
+PASO_SEVERIDAD_ALTA = 3.5
+
+
+def severidad(z: float, z_critico: float = Z_CRITICO) -> str:
+    """'baja' | 'media' | 'alta' para una desviacion ya clasificada critica."""
+    if z >= z_critico + PASO_SEVERIDAD_ALTA:
         return "alta"
-    if z >= z_critico + 1.5:
+    if z >= z_critico + PASO_SEVERIDAD_MEDIA:
         return "media"
     return "baja"
 
@@ -194,12 +221,17 @@ def detectar_eventos(
             indice=i,
             momento=momento,
             puntaje=puntajes[i],
-            severidad=_severidad(puntajes[i], z_critico),
+            severidad=severidad(puntajes[i], z_critico),
             evidencia={
                 "ventana": ventana,
                 "persistencia": persistencia,
                 "valor_observado": valor,
                 "valor_esperado": baseline.mediana,
+                # La linea base del momento de abrir, congelada. Es lo que el
+                # cierre automatico vuelve a usar para decidir si la
+                # desviacion ceso, en vez de recalcular una ventana que ya se
+                # habria adaptado al fallo (zenit.deteccion.cierre).
+                "linea_base": {"mediana": baseline.mediana, "escala": baseline.escala},
                 "metodo": "mad-v1",
             },
         ))
@@ -315,6 +347,7 @@ class Detector:
         z_normal: float = Z_NORMAL,
         z_critico: float = Z_CRITICO,
         rango_consulta: timedelta = RANGO_CONSULTA,
+        normalidad_para_cerrar: int = cierre.NORMALIDAD_PARA_CERRAR,
     ):
         self.repositorio = repositorio
         self.pg_url = pg_url
@@ -324,17 +357,30 @@ class Detector:
         self.z_normal = z_normal
         self.z_critico = z_critico
         self.rango_consulta = rango_consulta
+        self.normalidad_para_cerrar = normalidad_para_cerrar
         self._version_modelo = version_modelo(ventana, z_critico, persistencia)
 
     # -------------------------------------------------------------- ciclo
     def ciclo(self, ahora: Optional[datetime] = None) -> dict:
+        """Un ciclo: primero cierra lo que volvio a lo normal, despues abre lo
+        nuevo. En ese orden, para que una serie que se recupero y volvio a
+        caer en el mismo ciclo cierre su anomalia vieja antes de abrir la
+        nueva, en vez de quedar bloqueada por la deduplicacion.
+        """
         ahora = ahora or datetime.now(timezone.utc)
         desde = ahora - self.rango_consulta
         activos = senales_leidas = anomalias_abiertas = 0
         with catalogo.conectar(self.pg_url) as conexion:
+            degradados = self._degradados(conexion, ahora)
+            anomalias_cerradas = self._cerrar(conexion, degradados, desde, ahora)
             for fila in catalogo.listar_activos(conexion, incluir_retirados=False):
                 activo = fila["id"]
                 activos += 1
+                if activo in degradados:
+                    # Cuarto criterio de H-033: una fuente callada no es una
+                    # anomalia del activo. La deteccion de eso es H-021 y ya
+                    # sale por /api/fuentes y en el estado del inventario.
+                    continue
                 disponibles = self._metricas_de(activo)
                 for senal in self.senales:
                     if disponibles is not None and senal.metrica not in disponibles:
@@ -343,9 +389,88 @@ class Detector:
                     anomalias_abiertas += self._revisar(conexion, activo, senal, desde, ahora)
         return {
             "activos": activos,
+            "degradados": len(degradados),
             "senales": senales_leidas,
             "anomalias_abiertas": anomalias_abiertas,
+            "anomalias_cerradas": anomalias_cerradas,
         }
+
+    # ------------------------------------------------------ fuentes (H-021)
+    def _degradados(self, conexion, ahora: datetime) -> set:
+        """Los activos cuya fuente no esta reportando.
+
+        La regla de degradado vive en zenit.salud y en ningun otro lado (mas
+        de 5 minutos sin recibir), y es la misma que responde
+        `GET /api/fuentes`. Aqui se lee de PostgreSQL con esas funciones en
+        vez de llamar a la API: el detector ya tiene la conexion, y una copia
+        de la regla seria una segunda version de la verdad.
+        """
+        try:
+            filas = salud.fuentes_pg(conexion)
+        except Exception as e:  # noqa: BLE001 - sin fuentes se sigue detectando
+            log.warning("no se pudo leer el estado de las fuentes: %s", e)
+            return set()
+        ultimas = salud.ultima_recepcion_por_activo(filas)
+        degradados = {activo for activo, ultima in ultimas.items()
+                      if salud.estado_de(ultima, ahora) != "ok"}
+        # Un activo que nunca reporto no tiene fila en `fuentes` y no aparece
+        # aqui, pero tampoco tiene puntos: la pasada de apertura no encuentra
+        # serie y no abre nada igual.
+        if degradados:
+            log.info("fuentes no disponibles, no se abren anomalias: %s", ", ".join(sorted(degradados)))
+        return degradados
+
+    # -------------------------------------------------------------- cierre
+    def _cerrar(self, conexion, degradados: set, desde: datetime, hasta: datetime) -> int:
+        """Cierra las anomalias cuya serie volvio a lo normal el tiempo
+        exigido, medido contra la linea base congelada al abrirlas. El motivo
+        de usar la congelada esta en el encabezado de `cierre.py`."""
+        try:
+            pendientes = cierre.abiertas(conexion)
+        except Exception as e:  # noqa: BLE001 - la apertura sigue aunque el cierre falle
+            log.warning("no se pudieron listar las anomalias abiertas: %s", e)
+            return 0
+
+        cerradas = 0
+        for a in pendientes:
+            if a.activo in degradados:
+                continue    # sin datos no se puede afirmar que la desviacion ceso
+            if not a.evaluable:
+                log.warning("anomalia %s sin linea base en su evidencia: no se cierra sola", a.id)
+                continue
+            # Filtrando por TODAS sus dimensiones se recupera exactamente la
+            # serie de la anomalia, sin agrupar y sin mirar el catalogo.
+            try:
+                respuesta = self.repositorio.serie(
+                    a.activo, a.metrica, desde, hasta, filtros=a.dimensiones or None,
+                )
+            except ErrorConsulta as e:
+                log.warning("anomalia %s: no se pudo releer %s %s: %s", a.id, a.metrica, a.dimensiones, e)
+                continue
+            except Exception as e:  # noqa: BLE001 - una anomalia no tumba el ciclo
+                log.warning("anomalia %s: no se pudo releer la serie: %s", a.id, e)
+                continue
+            if respuesta.intervalo_s != RESOLUCION_ESPERADA_S:
+                log.warning("anomalia %s: la serie vino a %s s por punto; no se evalua el cierre",
+                            a.id, respuesta.intervalo_s)
+                continue
+            puntos: list = []
+            for serie in respuesta.series:
+                puntos += [(_a_momento(t), float(v)) for t, v in serie.puntos]
+            puntos.sort()
+            if a.clase == ACUMULADA:
+                puntos = a_tasa(puntos)
+            fin = cierre.momento_de_cierre(
+                puntos, a.mediana, a.escala,
+                normalidad=self.normalidad_para_cerrar, z_critico=self.z_critico,
+            )
+            if fin is None:
+                continue
+            if cierre.cerrar(conexion, a.id, fin):
+                cerradas += 1
+                log.info("anomalia cerrada: %s %s %s abierta %s, normal desde %s",
+                         a.id, a.activo, a.metrica, a.inicio, fin)
+        return cerradas
 
     def _metricas_de(self, activo: str) -> Optional[set]:
         """Las metricas que reporta este activo, para no consultar senales que
@@ -442,10 +567,16 @@ class Detector:
 
     # -------------------------------------------------------------- postgres
     def _ya_abierta(self, conexion, activo: str, metrica: str, dimensiones: dict) -> bool:
+        """Si esa serie ya tiene una anomalia en curso no se abre otra.
+
+        Se excluyen los estados terminales por la misma razon que en el
+        cierre: una anomalia que el operador marco como falso positivo sin
+        ponerle `fin` no debe bloquear para siempre la deteccion de su serie.
+        """
         with conexion.cursor() as cur:
             cur.execute(
                 "SELECT 1 FROM anomalias WHERE activo = %s AND metrica = %s "
-                "AND dimensiones = %s AND fin IS NULL LIMIT 1",
+                f"AND dimensiones = %s AND fin IS NULL AND estado NOT IN {cierre.EN_TERMINALES} LIMIT 1",
                 (activo, metrica, _jsonb(dimensiones)),
             )
             return cur.fetchone() is not None
