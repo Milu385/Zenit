@@ -1,41 +1,45 @@
-"""El detector como servicio (H-032).
+"""El metodo de deteccion y el trabajo de un ciclo (H-032).
+
+El punto de entrada esta en `__main__.py`, como en zenit.descubrimiento:
 
     python -m zenit.deteccion --cada 60        lo corre el servicio detector
+    python -m zenit.deteccion --senales        que senales del catalogo existen
 
 Cada ciclo (mismo patron que zenit.agregacion.Agregador):
 
 1. Lista los activos vigentes en el catalogo (zenit.catalogo.listar_activos).
-2. Para cada activo, pregunta a la capa de repositorio
-   (RepositorioSeries.serie, nunca SQL directo a InfluxDB) que metricas tiene
-   y lee su serie reciente a resolucion de 1 minuto.
+2. Para cada activo y cada senal del catalogo (zenit.deteccion.senales),
+   lee su serie por la capa de repositorio (RepositorioSeries.serie, nunca
+   SQL directo a InfluxDB) a resolucion de 1 minuto.
 3. Aplica la linea base por activo (mediana + MAD, cortes 1.5 / 3.5 de
-   Iglewicz & Hoaglin) del cuaderno `Modelo criticidad`, metrica por metrica.
+   Iglewicz & Hoaglin) del cuaderno `Modelo criticidad`, serie por serie.
 4. Abre una anomalia solo si la regla de persistencia se cumple: PERSISTENCIA
    puntos seguidos fuera de rango, nunca un pico aislado (criterio 3 de
-   H-032). Si ya hay una anomalia abierta para ese (activo, metrica), no abre
-   otra: seguir abierta o cerrarla es trabajo de H-033.
+   H-032). Si ya hay una anomalia abierta para ese (activo, metrica,
+   dimensiones), no abre otra: seguir abierta o cerrarla es trabajo de H-033.
+
+Que se vigila y con que dimensiones esta en `senales.py`, no aqui: este
+archivo no sabe nada de metricas concretas. Lo de alla tambien explica por
+que los contadores acumulados se convierten a tasa antes de la linea base.
 
 Limitacion heredada del cuaderno, documentada y no escondida (ver
 arquitectura-zenit-v0, seccion de estados de una anomalia): el metodo solo
 mira desviaciones hacia arriba. Una caida de servicio que se manifiesta como
-una *baja* de una señal no la detecta este metodo; lo cubre H-034
+una *baja* de una senal no la detecta este metodo; lo cubre H-034
 (deteccion no supervisada) cuando llegue a la misma salida.
 
 version_modelo (H-036) describe el metodo y sus parametros, por ejemplo
 "mad-v1 W=60 z=3.5 m=3": W es la ventana de la linea base, z el corte
 critico y m la persistencia exigida.
 """
-import argparse
 import logging
-import os
 import statistics
-import sys
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Mapping, Optional, Sequence
 
 from zenit import catalogo
+from zenit.deteccion.senales import SENALES, Senal, preparar, puntos_extra
 from zenit.repositorio.contrato import ErrorConsulta, RepositorioSeries
 
 log = logging.getLogger("zenit.deteccion")
@@ -58,11 +62,24 @@ PERSISTENCIA_DEFECTO = 3
 # llegado (o una metrica con poco historial) no genera falsos positivos por
 # falta de datos.
 HISTORIA_MINIMA = 5
-# Rango de consulta: mas de 24 h (UMBRAL_CRUDO en RepositorioInflux) para que
-# RepositorioSeries.serie responda al nivel de 1 minuto (H-019), nunca al
-# crudo de 10 s. La deteccion corre sobre el resumen por minuto, no sobre el
-# dato crudo (arquitectura, seccion de la detección).
-RANGO_CONSULTA = timedelta(hours=25)
+
+# La deteccion corre sobre el resumen por minuto, no sobre el crudo de 10 s
+# (arquitectura, seccion 4). RepositorioSeries no recibe la resolucion como
+# parametro: la deduce del tamano del rango (H-019), asi que el rango de
+# consulta es lo que la elige, y queda encajonado por dos lados:
+#
+#   - mas de 24 h (UMBRAL_CRUDO), o responde al nivel crudo de 10 s;
+#   - 25 h como maximo, porque el paso se calcula para dejar unos 1500
+#     puntos: a 25 h justas da 60 s, y un rango mayor salta al paso
+#     siguiente de la lista (120 s) y los puntos dejarian de ser de un
+#     minuto.
+#
+# 24 h 30 min queda dentro de los dos limites con margen. Cambiar este valor
+# sin mirar PASOS_S y UMBRAL_CRUDO en repositorio/influx.py rompe la
+# resolucion en silencio, y por eso cada respuesta se verifica abajo contra
+# RESOLUCION_ESPERADA_S.
+RANGO_CONSULTA = timedelta(hours=24, minutes=30)
+RESOLUCION_ESPERADA_S = 60
 
 
 # --------------------------------------------------------------------- metodo
@@ -76,12 +93,12 @@ class Baseline:
 
 def calcular_baseline(valores: Sequence[float]) -> Baseline:
     """Linea base de una ventana: mediana y MAD reescalado, con respaldo en
-    la desviacion estandar cuando el MAD es cero (señal casi constante).
+    la desviacion estandar cuando el MAD es cero (senal casi constante).
 
     Es la misma formula de `calcular_baseline` en el cuaderno `Modelo
-    criticidad`, adaptada a una sola metrica de un solo activo a la vez (aqui
-    la deteccion ya esta separada por activo y metrica; agrupar por activo,
-    como hace el cuaderno, es responsabilidad de quien llama).
+    criticidad`, adaptada a una sola serie a la vez (aqui la deteccion ya
+    esta separada por activo, metrica y dimensiones; agrupar por activo, como
+    hace el cuaderno, es responsabilidad de quien llama).
     """
     mediana = statistics.median(valores)
     mad = statistics.median(abs(v - mediana) for v in valores) * 1.4826
@@ -92,7 +109,7 @@ def calcular_baseline(valores: Sequence[float]) -> Baseline:
 
 def puntaje_z(valor: float, baseline: Baseline) -> float:
     """z = (valor - mediana) / escala. Una ventana sin escala (metrica
-    constante en su historial) no aporta señal de desviacion: z = 0, no un
+    constante en su historial) no aporta senal de desviacion: z = 0, no un
     error, siguiendo el mismo criterio del cuaderno."""
     if baseline.escala is None:
         return 0.0
@@ -111,9 +128,8 @@ def clasificar(z: float, z_normal: float = Z_NORMAL, z_critico: float = Z_CRITIC
 
 
 def _severidad(z: float, z_critico: float) -> str:
-    """Provisional (H-033 define el criterio final de severidad; el mensaje
-    de Maria Lucia dice literalmente "tus cortes sirven"). Reutiliza el mismo
-    paso de 1.5/3.5 del cuaderno, ahora por encima del corte critico."""
+    """Provisional (H-033 define el criterio final de severidad). Reutiliza el
+    mismo paso de 1.5/3.5 del cuaderno, ahora por encima del corte critico."""
     if z >= z_critico + 3.5:
         return "alta"
     if z >= z_critico + 1.5:
@@ -150,9 +166,6 @@ def detectar_eventos(
     Por diseno da como maximo un evento por racha, sin importar cuanto dure
     la racha despues: la prueba de la guia (serie plana con un escalon
     construido a mano) debe dar exactamente una anomalia, ni cero ni diez.
-    `momento` puede ser un datetime o un entero (milisegundos desde la
-    epoca, como devuelve RepositorioSeries); aqui no se interpreta, solo se
-    guarda en el evento.
     """
     valores = [v for _, v in puntos]
     n = len(valores)
@@ -198,7 +211,17 @@ def version_modelo(ventana: int = VENTANA_DEFECTO, z_critico: float = Z_CRITICO,
     return f"mad-v1 W={ventana} z={z_critico} m={persistencia}"
 
 
-# -------------------------------------------------------------------- servicio
+# ------------------------------------------------------------------ evaluacion
+@dataclass(frozen=True)
+class Hallazgo:
+    """Un evento ya atribuido a una serie concreta: lo que se convierte en
+    una fila de `anomalias`."""
+
+    senal: Senal
+    dimensiones: dict
+    evento: Evento
+
+
 def _a_momento(valor) -> datetime:
     """Los puntos de Serie vienen como [ms_epoca, valor] (contrato.Serie).
     Si ya es datetime (por ejemplo, en una prueba), se deja igual."""
@@ -207,81 +230,204 @@ def _a_momento(valor) -> datetime:
     return datetime.fromtimestamp(valor / 1000, timezone.utc)
 
 
+def evaluar_senal(
+    senal: Senal,
+    respuesta,
+    *,
+    ventana: int = VENTANA_DEFECTO,
+    persistencia: int = PERSISTENCIA_DEFECTO,
+    z_normal: float = Z_NORMAL,
+    z_critico: float = Z_CRITICO,
+    resolucion_esperada_s: int = RESOLUCION_ESPERADA_S,
+) -> list:
+    """Evalua una Respuesta del repositorio y devuelve los hallazgos.
+
+    Es la parte del detector que no toca ni la red ni la base de datos: recibe
+    lo que respondio el repositorio y devuelve lo que habria que escribir.
+
+    Dos guardas antes del metodo:
+
+    - **Resolucion.** Si la respuesta no vino a un punto por minuto, no se
+      evalua. La linea base y la ventana estan expresadas en minutos (W=60 son
+      60 minutos), asi que puntos de 10 s o de 2 minutos cambiarian
+      silenciosamente lo que significa la ventana y el modelo dejaria de ser
+      comparable (arquitectura: "un modelo entrenado sobre otra resolucion no
+      es comparable").
+    - **Series omitidas.** El repositorio devuelve como maximo 8 series por
+      consulta, un limite pensado para los colores de una grafica (H-019). Lo
+      que quede fuera no se vigila, y eso tiene que verse en los registros en
+      vez de pasar callado.
+    """
+    if respuesta.intervalo_s != resolucion_esperada_s:
+        log.warning("%s: la respuesta vino a %s s por punto, no a %s s; no se evalua "
+                    "(revisar RANGO_CONSULTA contra PASOS_S y UMBRAL_CRUDO)",
+                    senal.clave, respuesta.intervalo_s, resolucion_esperada_s)
+        return []
+    if getattr(respuesta, "series_omitidas", 0):
+        log.warning("%s: %s series quedaron fuera del limite del repositorio y no se vigilan",
+                    senal.clave, respuesta.series_omitidas)
+
+    hallazgos = []
+    for serie in respuesta.series:
+        puntos = preparar(senal, [(_a_momento(t), float(v)) for t, v in serie.puntos])
+        if len(puntos) < persistencia + max(2, HISTORIA_MINIMA):
+            continue
+        eventos = detectar_eventos(
+            puntos, ventana=ventana, persistencia=persistencia,
+            z_normal=z_normal, z_critico=z_critico,
+        )
+        if not eventos:
+            continue
+        # Las dimensiones de la anomalia son las que fijo la senal mas las
+        # que abrio la agrupacion: asi la fila de `anomalias` dice exactamente
+        # de que serie se trata (state=used y mountpoint=/, por ejemplo).
+        dimensiones = {**dict(senal.filtros), **dict(serie.etiquetas)}
+        evidencia_senal = {
+            "senal": senal.clave,
+            "clase": senal.clase,
+            "resolucion_s": respuesta.intervalo_s,
+        }
+        evento = eventos[-1]    # el mas reciente de la ventana
+        hallazgos.append(Hallazgo(
+            senal=senal,
+            dimensiones=dimensiones,
+            evento=Evento(
+                indice=evento.indice,
+                momento=evento.momento,
+                puntaje=evento.puntaje,
+                severidad=evento.severidad,
+                evidencia={**evento.evidencia, **evidencia_senal},
+            ),
+        ))
+    return hallazgos
+
+
+# -------------------------------------------------------------------- servicio
 class Detector:
     def __init__(
         self,
         repositorio: RepositorioSeries,
         pg_url: str,
         *,
+        senales: Sequence[Senal] = SENALES,
         ventana: int = VENTANA_DEFECTO,
         persistencia: int = PERSISTENCIA_DEFECTO,
         z_normal: float = Z_NORMAL,
         z_critico: float = Z_CRITICO,
         rango_consulta: timedelta = RANGO_CONSULTA,
-        metricas: Optional[Sequence[str]] = None,
     ):
         self.repositorio = repositorio
         self.pg_url = pg_url
+        self.senales = tuple(senales)
         self.ventana = ventana
         self.persistencia = persistencia
         self.z_normal = z_normal
         self.z_critico = z_critico
         self.rango_consulta = rango_consulta
-        # None: se detecta sobre todas las metricas que el repositorio
-        # reporte para cada activo (igual de generico que el cuaderno, que
-        # "sirve para cualquier usuario de Zenit... lo que cambia es el
-        # historial, no el codigo"). Fijar una lista es una optimizacion, no
-        # un requisito del metodo.
-        self.metricas = list(metricas) if metricas is not None else None
         self._version_modelo = version_modelo(ventana, z_critico, persistencia)
 
     # -------------------------------------------------------------- ciclo
     def ciclo(self, ahora: Optional[datetime] = None) -> dict:
         ahora = ahora or datetime.now(timezone.utc)
         desde = ahora - self.rango_consulta
-        activos_revisados = metricas_revisadas = anomalias_abiertas = 0
+        activos = senales_leidas = anomalias_abiertas = 0
         with catalogo.conectar(self.pg_url) as conexion:
             for fila in catalogo.listar_activos(conexion, incluir_retirados=False):
                 activo = fila["id"]
-                activos_revisados += 1
-                try:
-                    metricas = self.metricas if self.metricas is not None else self.repositorio.metricas_de(activo)
-                except ErrorConsulta as e:
-                    log.warning("no se pudieron listar las metricas de %s: %s", activo, e)
-                    continue
-                for metrica in metricas:
-                    metricas_revisadas += 1
-                    anomalias_abiertas += self._revisar(conexion, activo, metrica, desde, ahora)
+                activos += 1
+                disponibles = self._metricas_de(activo)
+                for senal in self.senales:
+                    if disponibles is not None and senal.metrica not in disponibles:
+                        continue    # esa metrica no llega de este activo
+                    senales_leidas += 1
+                    anomalias_abiertas += self._revisar(conexion, activo, senal, desde, ahora)
         return {
-            "activos": activos_revisados,
-            "metricas": metricas_revisadas,
+            "activos": activos,
+            "senales": senales_leidas,
             "anomalias_abiertas": anomalias_abiertas,
         }
 
-    def _revisar(self, conexion, activo: str, metrica: str, desde: datetime, hasta: datetime) -> int:
+    def _metricas_de(self, activo: str) -> Optional[set]:
+        """Las metricas que reporta este activo, para no consultar senales que
+        no existen. None si no se pudo averiguar: en ese caso se intentan
+        todas y cada una falla por su cuenta, sin tumbar el ciclo."""
         try:
-            respuesta = self.repositorio.serie(activo, metrica, desde, hasta)
-        except ErrorConsulta as e:
-            log.warning("no se pudo leer %s de %s: %s", metrica, activo, e)
-            return 0
-        abiertas = 0
-        for serie in respuesta.series:
-            necesarios = self.ventana + self.persistencia
-            puntos = [(_a_momento(t), v) for t, v in serie.puntos[-necesarios:]]
-            if len(puntos) < self.persistencia + max(2, HISTORIA_MINIMA):
-                continue
-            eventos = detectar_eventos(
-                puntos, ventana=self.ventana, persistencia=self.persistencia,
-                z_normal=self.z_normal, z_critico=self.z_critico,
+            return set(self.repositorio.metricas_de(activo))
+        except Exception as e:  # noqa: BLE001 - el ciclo sigue con las demas
+            log.warning("no se pudieron listar las metricas de %s: %s", activo, e)
+            return None
+
+    def _revisar(self, conexion, activo: str, senal: Senal, desde: datetime, hasta: datetime) -> int:
+        try:
+            respuesta = self.repositorio.serie(
+                activo, senal.metrica, desde, hasta,
+                agrupar=senal.agrupar, filtros=dict(senal.filtros) or None,
             )
-            if not eventos:
-                continue
-            dimensiones = dict(serie.etiquetas)
-            if self._ya_abierta(conexion, activo, metrica, dimensiones):
+        except ErrorConsulta as e:
+            # Dimension o valor que no existe en esta plataforma: es un error
+            # del catalogo de senales, no del activo. Se registra con la clave
+            # de la senal para poder corregir senales.py.
+            log.warning("%s en %s: %s", senal.clave, activo, e)
+            return 0
+        except Exception as e:  # noqa: BLE001 - un activo no tumba el ciclo
+            log.warning("no se pudo leer %s de %s: %s", senal.clave, activo, e)
+            return 0
+
+        abiertas = 0
+        for hallazgo in evaluar_senal(
+            senal, respuesta, ventana=self.ventana, persistencia=self.persistencia,
+            z_normal=self.z_normal, z_critico=self.z_critico,
+        ):
+            if self._ya_abierta(conexion, activo, senal.metrica, hallazgo.dimensiones):
                 continue    # ya hay una anomalia abierta: seguir o cerrar es H-033
-            self._abrir(conexion, activo, metrica, dimensiones, eventos[-1])
+            self._abrir(conexion, activo, senal.metrica, hallazgo)
             abiertas += 1
         return abiertas
+
+    def puntos_necesarios(self, senal: Senal) -> int:
+        """Cuantos puntos de un minuto hacen falta para evaluar esta senal."""
+        return self.ventana + self.persistencia + puntos_extra(senal)
+
+    # ---------------------------------------------------------- diagnostico
+    def revisar_catalogo(self) -> list:
+        """Para `--senales`: que senales del catalogo existen de verdad en la
+        plataforma, activo por activo. Es la forma barata de verificar los
+        nombres de `senales.py` sin desplegar nada.
+        """
+        informe = []
+        with catalogo.conectar(self.pg_url) as conexion:
+            activos = catalogo.listar_activos(conexion, incluir_retirados=False)
+        ahora = datetime.now(timezone.utc)
+        desde = ahora - self.rango_consulta
+        for fila in activos:
+            activo = fila["id"]
+            disponibles = self._metricas_de(activo) or set()
+            for senal in self.senales:
+                if senal.metrica not in disponibles:
+                    informe.append({"activo": activo, "senal": senal.clave,
+                                    "estado": "falta la metrica", "puntos": 0})
+                    continue
+                try:
+                    r = self.repositorio.serie(
+                        activo, senal.metrica, desde, ahora,
+                        agrupar=senal.agrupar, filtros=dict(senal.filtros) or None,
+                    )
+                except ErrorConsulta as e:
+                    informe.append({"activo": activo, "senal": senal.clave,
+                                    "estado": f"dimension no valida: {e}", "puntos": 0})
+                    continue
+                puntos = sum(len(s.puntos) for s in r.series)
+                if not puntos:
+                    estado = "sin datos (revisar el valor de la dimension)"
+                elif r.intervalo_s != RESOLUCION_ESPERADA_S:
+                    estado = f"resolucion de {r.intervalo_s} s, no de 60 s"
+                elif puntos < self.puntos_necesarios(senal):
+                    estado = f"historial corto: {puntos} de {self.puntos_necesarios(senal)} puntos"
+                else:
+                    estado = "ok"
+                informe.append({"activo": activo, "senal": senal.clave, "estado": estado,
+                                "puntos": puntos, "series": len(r.series)})
+        return informe
 
     # -------------------------------------------------------------- postgres
     def _ya_abierta(self, conexion, activo: str, metrica: str, dimensiones: dict) -> bool:
@@ -293,56 +439,21 @@ class Detector:
             )
             return cur.fetchone() is not None
 
-    def _abrir(self, conexion, activo: str, metrica: str, dimensiones: dict, evento: Evento) -> None:
+    def _abrir(self, conexion, activo: str, metrica: str, hallazgo: Hallazgo) -> None:
+        evento = hallazgo.evento
         with conexion.cursor() as cur:
             cur.execute(
                 "INSERT INTO anomalias "
                 "(activo, metrica, dimensiones, inicio, estado, severidad, puntaje, evidencia, version_modelo) "
                 "VALUES (%s, %s, %s, %s, 'detectada', %s, %s, %s, %s)",
-                (activo, metrica, _jsonb(dimensiones), evento.momento, evento.severidad,
+                (activo, metrica, _jsonb(hallazgo.dimensiones), evento.momento, evento.severidad,
                  evento.puntaje, _jsonb(evento.evidencia), self._version_modelo),
             )
         conexion.commit()
-        log.info("anomalia abierta: %s/%s severidad=%s puntaje=%.2f en %s",
-                 activo, metrica, evento.severidad, evento.puntaje, evento.momento)
+        log.info("anomalia abierta: %s %s severidad=%s puntaje=%.2f en %s",
+                 activo, hallazgo.senal.clave, evento.severidad, evento.puntaje, evento.momento)
 
 
 def _jsonb(data: dict):
     from psycopg.types.json import Jsonb
     return Jsonb(data)
-
-
-def principal(argv=None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    p = argparse.ArgumentParser(prog="python -m zenit.deteccion")
-    p.add_argument("--cada", type=int, default=0, help="segundos entre ciclos; 0 = uno solo")
-    args = p.parse_args(argv)
-
-    from zenit.influx import ClienteInflux
-    from zenit.repositorio.influx import RepositorioInflux
-
-    url = os.environ.get("PG_URL")
-    if not url or not os.environ.get("INFLUX_TOKEN"):
-        print("faltan PG_URL o INFLUX_TOKEN", file=sys.stderr)
-        return 2
-    catalogo.esperar_pg(url)
-    cliente = ClienteInflux(os.environ.get("INFLUX_URL", "http://influxdb:8181"), os.environ["INFLUX_TOKEN"])
-    repositorio = RepositorioInflux(cliente, os.environ.get("INFLUX_BD", "zenit_raw"))
-    detector = Detector(repositorio, url)
-
-    while True:
-        t0 = time.monotonic()
-        try:
-            r = detector.ciclo()
-            print(f"{datetime.now(timezone.utc):%H:%M:%S} {r['activos']} activos, {r['metricas']} metricas, "
-                  f"{r['anomalias_abiertas']} anomalias abiertas", flush=True)
-        except Exception:  # noqa: BLE001 - un ciclo fallido se repite en el siguiente
-            log.exception("ciclo fallido")
-        if not args.cada:
-            return 0
-        time.sleep(max(1.0, args.cada - (time.monotonic() - t0)))
-
-
-if __name__ == "__main__":
-    sys.exit(principal())
