@@ -11,6 +11,7 @@ name: zenit-plataforma
 #                                     └─▶ web
 #   descubridor ──▶ APIs de los proveedores (solo lectura) ──▶ postgres
 #   agregador   ──▶ influxdb (crudo ▶ 1m ▶ 1h)
+#   detector    ──▶ influxdb (resumen 1m, via repositorio) ──▶ postgres (anomalias)
 #
 # Solo el borde publica puertos. El grupo de seguridad limita el 4317 a las IP
 # de los nodos (admitir-nodo.sh) y el 443 a las del equipo (abrir-interfaz.sh).
@@ -250,6 +251,24 @@ services:
     environment:
       <<: [*influx, *pg]
       AGREGACION_RELLENO: ${AGREGACION_RELLENO:-${RETENCION_RAW:-30d}}
+    depends_on:
+      influxdb-bases:
+        condition: service_completed_successfully
+      postgres-esquema:
+        condition: service_completed_successfully
+
+  # Deteccion de anomalias (H-032), cada 60 s: linea base por activo y
+  # metrica, puntaje z y regla de persistencia. Lee por la capa de
+  # repositorio (nunca SQL directo a InfluxDB) y escribe en `anomalias`.
+  detector:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "zenit.deteccion", "--cada", "60"]
+    restart: unless-stopped
+    environment:
+      <<: [*influx, *pg]
     depends_on:
       influxdb-bases:
         condition: service_completed_successfully
