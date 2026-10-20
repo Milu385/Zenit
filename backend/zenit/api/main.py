@@ -22,6 +22,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from zenit import incidentes
 from zenit import salud as salud_fuentes
 from zenit.clickhouse import ErrorClickHouse
 from zenit.api.autorizacion import autenticada, crear_autorizador, identidad, publica, requiere
@@ -279,6 +280,39 @@ def crear_app(
 
         filas = _pg(catalogo.listar_huerfanas)
         return [{k: _iso(v) for k, v in f.items()} for f in filas]
+
+    # ---------------------------------------------------------------- incidentes (H-038)
+    @app.get("/api/incidentes", tags=["incidentes"])
+    @requiere("incidentes:ver")
+    def listar_incidentes(
+        estado: Optional[str] = Query(None, description="detectada | diagnosticada | confirmada | falso_positivo | cerrada"),
+        activo: Optional[str] = None,
+        desde: Optional[datetime] = Query(None, description="incidentes que seguian abiertos en este momento o despues"),
+        hasta: Optional[datetime] = Query(None, description="incidentes que empezaron antes de este momento"),
+    ):
+        """Incidentes ordenados por severidad (alta primero) y luego por inicio, el mas reciente primero (H-038).
+
+        Un incidente es una anomalia escrita por el detector. `tiene_diagnostico`
+        dice si ya hay una hipotesis generada; la evidencia esta en el detalle."""
+        if estado is not None and estado not in incidentes.ESTADOS:
+            raise HTTPException(422, detail=f"estado desconocido {estado!r}: se espera uno de {', '.join(incidentes.ESTADOS)}")
+        if desde is not None and hasta is not None and _utc(desde, desde) > _utc(hasta, hasta):
+            raise HTTPException(422, detail="desde es posterior a hasta")
+        if not pg_url:
+            return []
+        return _pg(lambda c: incidentes.listar(c, estado=estado, activo=activo, desde=desde, hasta=hasta))
+
+    @app.get("/api/incidentes/{id_incidente}", tags=["incidentes"])
+    @requiere("incidentes:ver")
+    def detalle_incidente(id_incidente: int):
+        """Un incidente con su evidencia y su diagnostico mas reciente (H-038).
+
+        La evidencia esta siempre, aunque el diagnostico no exista o haya
+        fallado; en ese caso `diagnostico` es null."""
+        encontrado = _pg(lambda c: incidentes.obtener(c, id_incidente)) if pg_url else None
+        if encontrado is None:
+            raise HTTPException(404, detail=f"no existe el incidente {id_incidente}")
+        return encontrado
 
     # ---------------------------------------------------------------- registros y trazas
     def _analitico():
