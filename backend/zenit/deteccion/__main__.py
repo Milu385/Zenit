@@ -44,11 +44,21 @@ def _desde_entorno():
 
 
 def _informe_senales(detector: Detector) -> int:
+    informe = detector.revisar_catalogo()
     faltan = 0
-    for fila in detector.revisar_catalogo():
+    for fila in informe["filas"]:
         ok = fila["estado"] == "ok"
         faltan += not ok
         print(f"{'ok   ' if ok else 'FALTA'} {fila['activo']:28} {fila['senal']:58} {fila['estado']}")
+
+    # El otro sentido de la revision: un nombre equivocado en el catalogo
+    # aparece arriba como "falta la metrica" y aqui, al lado, con el nombre
+    # que de verdad esta llegando.
+    if informe["sin_vigilar"]:
+        print("\nMetricas que llegan y ninguna senal vigila:")
+        for activo, metricas in informe["sin_vigilar"].items():
+            print(f"  {activo}: {', '.join(metricas)}")
+
     if faltan:
         print(f"\n{faltan} senales por corregir en zenit/deteccion/senales.py")
     else:

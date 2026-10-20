@@ -260,3 +260,159 @@ def test_catalogo_cubre_los_tipos_de_falla_del_laboratorio():
     aqui para que el hueco sea explicito en la evaluacion de H-029."""
     cubiertos = {f for s in SENALES for f in s.fallas}
     assert {"cpu", "memoria", "disco", "caida"} <= cubiertos
+
+
+# ------------------------------------------------------------------- ciclo
+# Con dobles de PostgreSQL y del repositorio: cubre el cableado del ciclo
+# (filtrado por metricas disponibles, deduplicacion, parametros del INSERT)
+# sin levantar nada. La prueba contra PostgreSQL y un doble de Influx, como
+# en test_agregacion.py, sigue pendiente.
+ACTIVO = "activo-azure-nodo-01"
+
+
+class _FalsoCursor:
+    def __init__(self, conexion):
+        self.conexion = conexion
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=None):
+        if sql.lstrip().startswith("INSERT"):
+            self.conexion.inserts.append(params)
+
+    def fetchone(self):
+        return (1,) if self.conexion.hay_abierta else None
+
+
+class _FalsaConexion:
+    def __init__(self, hay_abierta=False):
+        self.inserts: list = []
+        self.hay_abierta = hay_abierta
+        self.commits = 0
+
+    def cursor(self):
+        return _FalsoCursor(self)
+
+    def commit(self):
+        self.commits += 1
+
+
+class _FalsoRepositorio:
+    """Solo reporta las metricas de `disponibles`; la de `saturada` trae un
+    escalon y las demas una serie plana."""
+
+    def __init__(self, disponibles, saturada=None):
+        self.disponibles = list(disponibles)
+        self.saturada = saturada
+        self.consultas: list = []
+
+    def metricas_de(self, activo):
+        return list(self.disponibles)
+
+    def serie(self, activo, metrica, desde, hasta, *, agrupar=None, filtros=None):
+        self.consultas.append((metrica, agrupar, filtros))
+        valores = (_plano(90) + _plano(30, nivel=40.0, semilla=1)
+                   if metrica == self.saturada else _plano(120))
+        return _respuesta([_serie(valores)],
+                          etiquetas=[{agrupar: "x"} if agrupar else {}])
+
+
+def _conectado(monkeypatch, conexion, activos=(ACTIVO,)):
+    import contextlib
+
+    from zenit import catalogo
+
+    monkeypatch.setattr(catalogo, "conectar",
+                        lambda url, autocommit=False: contextlib.nullcontext(conexion))
+    monkeypatch.setattr(catalogo, "listar_activos",
+                        lambda c, incluir_retirados=True: [{"id": a} for a in activos])
+
+
+def _desenvolver(valor):
+    """Los jsonb van envueltos en psycopg.types.json.Jsonb."""
+    return getattr(valor, "obj", valor)
+
+
+def test_ciclo_solo_consulta_las_metricas_que_existen(monkeypatch):
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    repo = _FalsoRepositorio(["system_cpu_utilization"])
+
+    resumen = Detector(repo, "postgresql://doble").ciclo()
+
+    assert resumen["activos"] == 1
+    # las tres senales de system_cpu_utilization, y ninguna de las demas
+    assert {m for m, _, _ in repo.consultas} == {"system_cpu_utilization"}
+    assert resumen["senales"] == 3
+
+
+def test_ciclo_pasa_los_filtros_de_la_senal_al_repositorio(monkeypatch):
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    repo = _FalsoRepositorio(["system_filesystem_usage"])
+
+    Detector(repo, "postgresql://doble").ciclo()
+
+    assert repo.consultas == [("system_filesystem_usage", "mountpoint", {"state": "used"})]
+
+
+def test_ciclo_abre_la_anomalia_con_la_forma_de_la_tabla(monkeypatch):
+    from zenit.deteccion.detector import Detector, version_modelo
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    repo = _FalsoRepositorio(["system_memory_utilization"], saturada="system_memory_utilization")
+
+    resumen = Detector(repo, "postgresql://doble").ciclo()
+
+    assert resumen["anomalias_abiertas"] == 1
+    assert conexion.commits == 1
+    activo, metrica, dimensiones, inicio, severidad, puntaje, evidencia, version = conexion.inserts[0]
+    assert (activo, metrica) == (ACTIVO, "system_memory_utilization")
+    assert _desenvolver(dimensiones) == {"state": "used"}
+    assert inicio.tzinfo is not None                  # timestamptz, nunca ingenuo
+    assert severidad in ("baja", "media", "alta")
+    assert puntaje >= Z_CRITICO
+    assert version == version_modelo()
+    evid = _desenvolver(evidencia)
+    assert {"ventana", "persistencia", "valor_observado", "valor_esperado",
+            "metodo", "senal", "clase", "resolucion_s"} <= set(evid)
+
+
+def test_ciclo_no_duplica_una_anomalia_ya_abierta(monkeypatch):
+    """Mientras siga abierta no se abre otra: cerrarla es trabajo de H-033."""
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion(hay_abierta=True)
+    _conectado(monkeypatch, conexion)
+    repo = _FalsoRepositorio(["system_memory_utilization"], saturada="system_memory_utilization")
+
+    resumen = Detector(repo, "postgresql://doble").ciclo()
+
+    assert resumen["anomalias_abiertas"] == 0
+    assert conexion.inserts == []
+
+
+def test_revisar_catalogo_reporta_los_dos_sentidos(monkeypatch):
+    """Un nombre equivocado sale como senal que falta y, al lado, como
+    metrica que llega sin vigilancia."""
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    repo = _FalsoRepositorio(["system_memory_utilization", "una_metrica_nueva"])
+
+    informe = Detector(repo, "postgresql://doble").revisar_catalogo()
+
+    estados = {f["senal"]: f["estado"] for f in informe["filas"]}
+    assert estados["system_memory_utilization[state=used]"] == "ok"
+    assert estados["system_cpu_utilization[state=user]"] == "falta la metrica"
+    assert informe["sin_vigilar"] == {ACTIVO: ["una_metrica_nueva"]}

@@ -389,12 +389,20 @@ class Detector:
         return self.ventana + self.persistencia + puntos_extra(senal)
 
     # ---------------------------------------------------------- diagnostico
-    def revisar_catalogo(self) -> list:
+    def revisar_catalogo(self) -> dict:
         """Para `--senales`: que senales del catalogo existen de verdad en la
         plataforma, activo por activo. Es la forma barata de verificar los
         nombres de `senales.py` sin desplegar nada.
+
+        La revision va en los dos sentidos. `filas` dice que senales del
+        catalogo no encuentran su metrica; `sin_vigilar` dice que metricas
+        estan llegando y ninguna senal menciona. Un nombre equivocado en el
+        catalogo aparece en las dos listas a la vez, y la segunda suele traer
+        el nombre correcto al lado.
         """
         informe = []
+        sin_vigilar: dict = {}
+        vigiladas = {s.metrica for s in self.senales}
         with catalogo.conectar(self.pg_url) as conexion:
             activos = catalogo.listar_activos(conexion, incluir_retirados=False)
         ahora = datetime.now(timezone.utc)
@@ -402,6 +410,9 @@ class Detector:
         for fila in activos:
             activo = fila["id"]
             disponibles = self._metricas_de(activo) or set()
+            sobrantes = sorted(disponibles - vigiladas)
+            if sobrantes:
+                sin_vigilar[activo] = sobrantes
             for senal in self.senales:
                 if senal.metrica not in disponibles:
                     informe.append({"activo": activo, "senal": senal.clave,
@@ -427,7 +438,7 @@ class Detector:
                     estado = "ok"
                 informe.append({"activo": activo, "senal": senal.clave, "estado": estado,
                                 "puntos": puntos, "series": len(r.series)})
-        return informe
+        return {"filas": informe, "sin_vigilar": sin_vigilar}
 
     # -------------------------------------------------------------- postgres
     def _ya_abierta(self, conexion, activo: str, metrica: str, dimensiones: dict) -> bool:
