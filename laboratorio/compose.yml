@@ -46,6 +46,9 @@ services:
       ALMACEN_CLAVE:   ${ALMACEN_CLAVE:?falta ALMACEN_CLAVE}
       ALMACEN_BD:      ${ALMACEN_BD:-zenit}
       OTEL_SERVICE_NAME: catalogo
+      # click envuelve todo el proceso de uvicorn en un span que nunca termina:
+      # sin esto, todas las peticiones quedan en una sola traza sin raiz.
+      OTEL_PYTHON_DISABLED_INSTRUMENTATIONS: click
       OTEL_TRACES_EXPORTER: ${EXPORTADOR_TRAZAS:-none}
       OTEL_LOGS_EXPORTER: ${EXPORTADOR_REGISTROS:-none}
       OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "true"
@@ -71,6 +74,9 @@ services:
       <<: *identidad
       URL_CATALOGO: http://catalogo:8000
       OTEL_SERVICE_NAME: pedidos
+      # click envuelve todo el proceso de uvicorn en un span que nunca termina:
+      # sin esto, todas las peticiones quedan en una sola traza sin raiz.
+      OTEL_PYTHON_DISABLED_INSTRUMENTATIONS: click
       OTEL_TRACES_EXPORTER: ${EXPORTADOR_TRAZAS:-none}
       OTEL_LOGS_EXPORTER: ${EXPORTADOR_REGISTROS:-none}
       OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "true"
