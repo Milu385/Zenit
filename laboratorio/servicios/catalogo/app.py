@@ -5,6 +5,9 @@ from fastapi import FastAPI, HTTPException
 app = FastAPI()
 _pool = None
 
+# Existencias con que vuelve un articulo agotado (ver reservar).
+REPOSICION = int(os.environ.get("CATALOGO_REPOSICION", "100"))
+
 DSN = (f"postgresql://{os.environ['ALMACEN_USUARIO']}:{os.environ['ALMACEN_CLAVE']}"
        f"@{os.environ.get('ALMACEN_HOST', 'almacen')}:5432/{os.environ['ALMACEN_BD']}")
 
@@ -50,6 +53,14 @@ async def reservar(articulo_id: int):
             """UPDATE articulos SET existencias = existencias - 1
                WHERE id=$1 AND existencias > 0
                RETURNING id, existencias""", articulo_id)
+        if fila is None:
+            # Reposicion: sin ella, a 5 peticiones por segundo las 20 000
+            # unidades se agotan en una hora y desde ahi toda reserva responde
+            # 409. El error dejaria de ser un evento y pasaria a ser el estado
+            # normal del laboratorio. Con la reposicion, cada articulo da un
+            # 409 cada REPOSICION reservas.
+            await c.execute("UPDATE articulos SET existencias = $2 WHERE id = $1",
+                            articulo_id, REPOSICION)
     if fila is None:
         raise HTTPException(409, "sin existencias")
     return dict(fila)
