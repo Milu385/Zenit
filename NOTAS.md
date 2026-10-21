@@ -180,7 +180,8 @@ Preguntas abiertas:
 | Qué | Estado |
 |---|---|
 | `GET /api/activos` y `/api/activos/{id}` con la forma ampliada (estado, `ultima_recepcion`, `incidentes_abiertos`, `cpu_reciente`) | El backend sigue devolviendo `{id, claves}`. Depende de la tabla `anomalias` del detector para `incidentes_abiertos` y `atencion` |
-| `GET /api/incidentes`, `/{id}`, `/estado` y `/diagnostico` | No están en el backend. Las construyen el detector (María Lucía) y el servicio de diagnóstico (Juan José). La interfaz y el simulador ya usan esas formas |
+| `GET /api/incidentes` y `/{id}` | Construidas (H-038). Leen `anomalias` y el diagnóstico más reciente de `diagnosticos`. La evidencia sale con `ventana: {desde, hasta}` (desde = inicio menos la ventana de línea base; hasta = fin, o ahora si sigue abierta) y `metricas_relacionadas: []` hasta H-039 |
+| `POST /api/incidentes/{id}/estado` y `/diagnostico` | Pendientes: `/estado` es H-037 (Daniel) y `/diagnostico` es H-040 (Juan José) |
 | `GET /api/laboratorio/inyecciones` | Solo en el simulador |
 | Registros y trazas como evidencia | El wireframe los pide, pero la evidencia del contrato v1 solo trae métricas. La pantalla lo dice |
 | Tendencia de costos en el tiempo y activos subutilizados (pantalla 6) | No están en el contrato |
