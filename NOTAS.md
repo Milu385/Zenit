@@ -62,7 +62,10 @@ Los usuarios se crean con un script, desde `deploy/`; la pantalla de usuarios no
 docker compose exec api python -m zenit.gobernanza.usuarios crear daniel administrador   # pide la clave
 docker compose exec api python -m zenit.gobernanza.usuarios listar
 # también: rol <usuario> <rol>, clave <usuario>, borrar <usuario>
+docker compose exec api python -m zenit.gobernanza.usuarios desactivar maria   # H-044; 'activar' lo deshace
 ```
+
+Desactivar no borra: el usuario conserva su rol y lo que marcó, pero no puede iniciar sesión (recibe el mismo mensaje que con una clave mala) y su sesión vigente deja de valer. Necesita la columna `activo` de `deploy/postgres/06-usuarios-activo.sql`, que `postgres-esquema` aplica sola al arrancar.
 
 ### Instantánea de configuración de un nodo
 

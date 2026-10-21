@@ -7,7 +7,14 @@ de la API (el encargo lo permite si falta tiempo):
     docker compose exec api python -m zenit.gobernanza.usuarios rol maria operador
     docker compose exec api python -m zenit.gobernanza.usuarios clave maria
     docker compose exec api python -m zenit.gobernanza.usuarios listar
+    docker compose exec api python -m zenit.gobernanza.usuarios desactivar maria
+    docker compose exec api python -m zenit.gobernanza.usuarios activar maria
     docker compose exec api python -m zenit.gobernanza.usuarios borrar maria
+
+Desactivar (H-044) es lo normal cuando alguien deja el equipo: conserva el
+usuario y su rol, que siguen apareciendo en lo que marco (marcada_por), pero
+no puede iniciar sesion y su sesion vigente deja de valer. Borrar queda para
+un usuario creado por error.
 
 La clave se pide por la terminal (getpass) y nunca pasa por argumentos, que
 quedan en el historial del shell y en la lista de procesos.
@@ -18,7 +25,7 @@ import argparse
 import getpass
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Protocol
 
 from zenit.gobernanza import claves
@@ -30,6 +37,7 @@ class Usuario:
     usuario: str
     rol: str
     clave_hash: str
+    activo: bool = True        # False: desactivado (H-044), no puede entrar
 
 
 class RepositorioUsuarios(Protocol):
@@ -82,16 +90,18 @@ class UsuariosPg:
 
     def obtener(self, usuario):
         with self._conexion() as c:
-            fila = c.execute("SELECT usuario, rol, clave_hash FROM usuarios WHERE usuario = %s", (usuario,)).fetchone()
+            fila = c.execute("SELECT usuario, rol, clave_hash, activo FROM usuarios WHERE usuario = %s",
+                             (usuario,)).fetchone()
         return Usuario(*fila) if fila else None
 
     def guardar(self, u):
         _validar(u.usuario, u.rol)
         with self._conexion() as c:
             c.execute(
-                "INSERT INTO usuarios (usuario, rol, clave_hash) VALUES (%s, %s, %s) "
-                "ON CONFLICT (usuario) DO UPDATE SET rol = EXCLUDED.rol, clave_hash = EXCLUDED.clave_hash",
-                (u.usuario, u.rol, u.clave_hash),
+                "INSERT INTO usuarios (usuario, rol, clave_hash, activo) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (usuario) DO UPDATE SET rol = EXCLUDED.rol, clave_hash = EXCLUDED.clave_hash, "
+                "activo = EXCLUDED.activo",
+                (u.usuario, u.rol, u.clave_hash, u.activo),
             )
 
     def borrar(self, usuario):
@@ -100,7 +110,7 @@ class UsuariosPg:
 
     def listar(self):
         with self._conexion() as c:
-            filas = c.execute("SELECT usuario, rol, clave_hash FROM usuarios ORDER BY usuario").fetchall()
+            filas = c.execute("SELECT usuario, rol, clave_hash, activo FROM usuarios ORDER BY usuario").fetchall()
         return [Usuario(*f) for f in filas]
 
 
@@ -128,6 +138,10 @@ def main(argv: list[str] | None = None, repo: RepositorioUsuarios | None = None,
     r.add_argument("rol", choices=ROLES)
     k = sub.add_parser("clave", help="cambia la clave (la pide)")
     k.add_argument("usuario")
+    d = sub.add_parser("desactivar", help="impide que entre, sin borrarlo")
+    d.add_argument("usuario")
+    v = sub.add_parser("activar", help="deshace desactivar")
+    v.add_argument("usuario")
     b = sub.add_parser("borrar")
     b.add_argument("usuario")
     sub.add_parser("listar")
@@ -141,7 +155,7 @@ def main(argv: list[str] | None = None, repo: RepositorioUsuarios | None = None,
 
     if a.orden == "listar":
         for u in repo.listar():
-            print(f"{u.usuario:30s} {u.rol}")
+            print(f"{u.usuario:30s} {u.rol:15s} {'' if u.activo else 'desactivado'}".rstrip())
         return 0
     if a.orden == "borrar":
         if not repo.borrar(a.usuario):
@@ -161,11 +175,19 @@ def main(argv: list[str] | None = None, repo: RepositorioUsuarios | None = None,
     if not actual:
         print(f"no existe {a.usuario}", file=sys.stderr)
         return 1
+    if a.orden in ("desactivar", "activar"):
+        activo = a.orden == "activar"
+        if actual.activo == activo:
+            print(f"{a.usuario} ya estaba {'activo' if activo else 'desactivado'}")
+            return 0
+        repo.guardar(replace(actual, activo=activo))
+        print(f"{a.usuario} {'activado' if activo else 'desactivado'}")
+        return 0
     if a.orden == "rol":
-        repo.guardar(Usuario(actual.usuario, a.rol, actual.clave_hash))
+        repo.guardar(replace(actual, rol=a.rol))
         print(f"{a.usuario} ahora es {a.rol}")
     else:
-        repo.guardar(Usuario(actual.usuario, actual.rol, claves.derivar(pedir_clave())))
+        repo.guardar(replace(actual, clave_hash=claves.derivar(pedir_clave())))
         print(f"clave de {a.usuario} cambiada")
     return 0
 
