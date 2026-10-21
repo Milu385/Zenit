@@ -194,6 +194,38 @@ export type ReporteCostos = {
   sin_asignar: number;
 };
 
+// FUERA DEL CONTRATO (H-047): GET /api/gobernanza/costos/analisis?desde&hasta
+export type CriterioSubutilizado = {
+  cpu_promedio_max: number; // fracciones 0..1
+  cpu_pico_max: number;
+  memoria_promedio_max: number;
+  horas_minimas: number;
+};
+export type UsoActivo = {
+  activo: string;
+  entorno: string;
+  proveedor: string | null;
+  costo: number;
+  horas_medidas: number;
+  cpu_promedio: number | null;
+  cpu_pico: number | null;
+  memoria_promedio: number | null;
+  subutilizado: boolean | null; // null: sin datos suficientes para decirlo
+  motivo: string;
+};
+export type AnalisisCostos = {
+  moneda: string;
+  periodo: { desde: string; hasta: string };
+  criterio: CriterioSubutilizado;
+  activos: UsoActivo[];
+  tendencia: {
+    meses: string[]; // AAAA-MM
+    por_entorno: { entorno: string; montos: number[] }[];
+    por_activo: { activo: string; entorno: string; montos: number[] }[];
+  };
+  uso: { desde: string; hasta: string; disponible: boolean };
+};
+
 // FUERA DEL CONTRATO: respuesta de POST /api/gobernanza/costos/facturas
 export type ResumenImportacion = {
   huella: string;

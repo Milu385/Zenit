@@ -26,7 +26,7 @@ from zenit import incidentes
 from zenit import salud as salud_fuentes
 from zenit.clickhouse import ErrorClickHouse
 from zenit.api.autorizacion import autenticada, crear_autorizador, identidad, publica, requiere
-from zenit.gobernanza import claves, configuraciones, costos
+from zenit.gobernanza import claves, configuraciones, costos, subutilizados
 from zenit.gobernanza.permisos import permisos_de
 from zenit.gobernanza.sesiones import Intentos, Sesiones
 from zenit.gobernanza.usuarios import RepositorioUsuarios, UsuariosMemoria
@@ -529,6 +529,32 @@ def crear_app(
         if inicio > fin:
             raise HTTPException(422, detail="desde no puede ser posterior a hasta")
         return costos.reporte(cargos, inicio, fin)
+
+    @app.get("/api/gobernanza/costos/analisis", tags=["gobernanza"])
+    @requiere("costos:ver")
+    def analisis_costos(desde: Optional[date] = None, hasta: Optional[date] = None):
+        """Fuera del contrato v1.2 (H-047, NOTAS.md). Subutilizados: el costo de
+        cada activo cruzado con su CPU y memoria del resumen por hora, con el
+        criterio en la respuesta. Tendencia: el gasto por mes, por entorno y
+        por activo. No recomienda apagar ni redimensionar nada."""
+        cargos = facturas.cargos()
+        por_defecto = costos.periodo_por_defecto(cargos)
+        inicio, fin = desde or por_defecto[0], hasta or por_defecto[1]
+        if inicio > fin:
+            raise HTTPException(422, detail="desde no puede ser posterior a hasta")
+        entornos = {}
+        if pg_url:
+            entornos = {a["id"]: a["entorno"] for a in _catalogo_pg()}
+        # el uso se mide como mucho en los ultimos 180 dias del periodo (lo que retiene zenit_1h)
+        uso_hasta = datetime.combine(fin + timedelta(days=1), datetime.min.time(), timezone.utc)
+        uso_desde = max(datetime.combine(inicio, datetime.min.time(), timezone.utc), uso_hasta - timedelta(days=180))
+        try:
+            uso, uso_disponible = repositorio.uso_por_hora(uso_desde, min(uso_hasta, datetime.now(timezone.utc))), True
+        except ErrorInflux:
+            uso, uso_disponible = {}, False
+        r = subutilizados.analizar(cargos, uso, entornos, inicio, fin)
+        r["uso"] = {"desde": uso_desde.isoformat(), "hasta": uso_hasta.isoformat(), "disponible": uso_disponible}
+        return r
 
     return app
 

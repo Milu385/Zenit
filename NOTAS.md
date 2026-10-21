@@ -158,6 +158,8 @@ Desde la pantalla de costos, con un rol que tenga `costos:importar`. Otra opció
 - **`fuente`** dice "factura exportada AAAA-MM", con el mes más frecuente de las líneas.
 - **La pantalla calcula** el total y los totales por proveedor y por entorno. El entorno sale del inventario (`/api/activos`), porque el reporte de costos no lo trae.
 - **Detalle de lo no asignado.** El contrato solo da el número `sin_asignar`. El detalle por línea se ve al importar, en la respuesta de la importación, que es una extensión (sección 3).
+- **Tendencia del gasto (H-047).** Por mes, por entorno y por activo, con la variación del último mes contra el anterior. Cada cargo cuenta en el mes en que empieza, como en el reporte.
+- **Costo contra uso (H-047).** Cada activo con su costo, CPU promedio, la hora de más CPU y memoria promedio del resumen por hora (`zenit_1h`). Se marca subutilizado si tiene costo, al menos 24 h medidas, CPU promedio < 10 %, ninguna hora con CPU ≥ 40 % y memoria promedio < 40 % (`zenit/gobernanza/subutilizados.py`). El criterio va en la respuesta y la pantalla lo muestra arriba de la tabla. No se sugiere apagar ni redimensionar.
 
 ---
 
@@ -169,6 +171,7 @@ Lo que se agregó y que no estaba en `contrato-api-v1.md`. En el código va marc
 |---|---|
 | `POST /api/gobernanza/configuraciones/instantaneas` (201) | Sin esto el reporte de configuraciones no tiene de dónde salir. Lo llama el script del nodo con `TOKEN_INSTANTANEAS`, no con una sesión de usuario |
 | `POST /api/gobernanza/costos/facturas?proveedor=digitalocean` (201, cuerpo CSV) | Importar la factura. Responde `ResumenImportacion`, con `lineas_sin_asignar[{concepto, producto, monto, motivo}]` |
+| `GET /api/gobernanza/costos/analisis?desde&hasta` (H-047, `costos:ver`) | Tendencia del gasto por mes y costo contra uso. Responde `criterio`, `activos[]` con `subutilizado` (true, false o null si faltan datos) y su `motivo`, `tendencia{meses, por_entorno, por_activo}` y `uso{desde, hasta, disponible}` |
 | Permiso `configuraciones:enviar` (administrador) | Lo tiene el token de los nodos, y el administrador para pruebas |
 | Permiso `costos:importar` (administrador, finanzas) | Quién sube facturas |
 | Nombres de permiso (`activos:ver`, `incidentes:gestionar`...) | El contrato solo da el ejemplo `incidentes:ver`. El resto sigue las filas de la tabla de la sección 2 |

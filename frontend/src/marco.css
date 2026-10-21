@@ -349,6 +349,11 @@ button { font: inherit; }
 .span-error .span-barra span { background: var(--mal); }
 .entornos { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip-entorno { padding: 1px 8px; border-radius: 999px; border: 1.5px solid var(--negro); font-size: 12px; background: #fff; }
+/* H-047: tendencia del gasto y costo contra uso */
+.criterio { background: #fff7d6; border-left: 4px solid var(--amarillo); padding: 8px 12px; font-size: 14px; margin: 0 0 12px; }
+.tabla-tendencia caption { text-align: left; font-weight: 700; padding: 8px 0; }
+.barra-mes { display: block; height: 4px; margin-top: 4px; background: var(--linea); border-radius: 2px; }
+.barra-mes span { display: block; height: 100%; background: var(--azul); border-radius: 2px; margin-left: auto; }
 .rejilla-dos { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .sin-asignar-importacion { margin-top: 10px; font-size: 14px; }
 .apagado { color: var(--apagado); }

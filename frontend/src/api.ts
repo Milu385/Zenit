@@ -2,6 +2,7 @@
 // formas de contrato.ts.
 import type {
   Activo,
+  AnalisisCostos,
   DetalleActivo,
   DetalleIncidente,
   Descubrimientos,
@@ -163,6 +164,12 @@ export const api = {
     return pedir<ReporteCostos>(`/api/gobernanza/costos${q.toString() ? `?${q}` : ""}`, { senal: s });
   },
   // FUERA DEL CONTRATO (NOTAS.md)
+  analisisCostos: (desde: string, hasta: string, s?: AbortSignal) => {
+    const q = new URLSearchParams();
+    if (desde) q.set("desde", desde);
+    if (hasta) q.set("hasta", hasta);
+    return pedir<AnalisisCostos>(`/api/gobernanza/costos/analisis${q.toString() ? `?${q}` : ""}`, { senal: s });
+  },
   importarFactura: (proveedor: string, archivo: File) =>
     pedir<ResumenImportacion>(`/api/gobernanza/costos/facturas?proveedor=${c(proveedor)}`, {
       metodo: "POST",

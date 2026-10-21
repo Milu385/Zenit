@@ -26,6 +26,9 @@ class RepoNulo:
     def serie(self, *a, **k):
         raise ErrorConsulta("sin datos en esta prueba")
 
+    def uso_por_hora(self, desde, hasta):
+        return {}
+
     def disponible(self):
         return True
 

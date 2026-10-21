@@ -79,5 +79,9 @@ class RepositorioSeries(Protocol):
     def cpu_reciente(self, minutos: int = 5) -> dict:
         """{activo: fraccion de CPU ocupada} en los ultimos minutos, para el inventario."""
 
+    def uso_por_hora(self, desde: datetime, hasta: datetime) -> dict:
+        """{activo: {"cpu": [fraccion por hora], "memoria": [fraccion por hora]}}
+        del resumen por hora (H-019), para los subutilizados (H-047)."""
+
     def disponible(self) -> bool:
         """True si el motor responde."""

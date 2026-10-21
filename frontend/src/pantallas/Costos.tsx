@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent } from "react";
 import { api } from "../api";
+import AnalisisCostos from "../componentes/AnalisisCostos";
 import { SinDatos } from "../componentes/Estados";
 import Marco from "../componentes/Marco";
 import SegunCarga from "../componentes/SegunCarga";
@@ -10,8 +11,8 @@ import { useSesion } from "../sesion";
 import { useCarga } from "../useCarga";
 
 // Pantalla 6, como tablas. Costo atribuido a cada activo, y lo no asignable
-// aparte (RF-GOB-07): nunca se reparte a ojo. La tendencia y los activos
-// subutilizados no estan en el contrato v1 (NOTAS.md).
+// aparte (RF-GOB-07): nunca se reparte a ojo. Debajo, la tendencia del gasto
+// y el costo contra el uso (H-047), que no estan en el contrato (NOTAS.md).
 
 function Importar({ alTerminar }: { alTerminar: () => void }) {
   const archivo = useRef<HTMLInputElement>(null);
@@ -201,6 +202,10 @@ export default function Costos() {
   const [hasta, setHasta] = useState("");
   const invertido = !!desde && !!hasta && desde > hasta;
   const r = useCarga((s) => (invertido ? new Promise<never>(() => {}) : api.costos(desde, hasta, s)), [desde, hasta, invertido]);
+  const an = useCarga(
+    (s) => (invertido ? new Promise<never>(() => {}) : api.analisisCostos(desde, hasta, s)),
+    [desde, hasta, invertido],
+  );
   // el entorno sale del inventario; si no carga, la pantalla sigue sin esa columna
   const inv = useCarga((s) => api.activos(s), []);
   const activos = inv.carga.estado === "listo" ? inv.carga.datos : null;
@@ -247,8 +252,20 @@ export default function Costos() {
               )}
             </SegunCarga>
           )}
+          {!invertido && r.carga.estado === "listo" && (
+            <SegunCarga r={an} que="la tendencia y el uso">
+              {(a) => <AnalisisCostos a={a} />}
+            </SegunCarga>
+          )}
         </div>
-        {puede("costos:importar") && <Importar alTerminar={r.reintentar} />}
+        {puede("costos:importar") && (
+          <Importar
+            alTerminar={() => {
+              r.reintentar();
+              an.reintentar();
+            }}
+          />
+        )}
       </div>
     </Marco>
   );
