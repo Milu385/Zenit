@@ -2,7 +2,8 @@
 
 Un incidente es una fila de `anomalias` (la escribe el detector, H-032) con
 su diagnostico mas reciente de `diagnosticos`, si existe. Este modulo solo
-lee: abrir y cerrar es del detector, y confirmar o descartar es de H-037.
+lee, salvo `marcar`: abrir y cerrar es del detector, y confirmar o descartar
+lo hace el operador (H-037).
 
 La evidencia se devuelve siempre, haya o no diagnostico, y con la forma del
 contrato. El detector guarda la ventana como minutos de linea base; aqui se
@@ -16,6 +17,10 @@ from typing import Optional
 
 ESTADOS = ("detectada", "diagnosticada", "confirmada", "falso_positivo", "cerrada")
 SEVERIDADES = ("alta", "media", "baja")
+MANUALES = ("confirmada", "falso_positivo")
+# los mismos que excluye el detector al cerrar (deteccion/cierre.py)
+TERMINALES = ("cerrada", "falso_positivo")
+TERMINAL = object()   # respuesta de `marcar` cuando el incidente ya no admite cambios
 LIMITE = 500
 
 _COLUMNAS = ("id", "activo", "metrica", "dimensiones", "inicio", "fin", "estado",
@@ -91,6 +96,38 @@ def obtener(conexion, id_: int, ahora: Optional[datetime] = None) -> Optional[di
             "texto": texto, "evidencia_citada": citada or [], "modelo": modelo,
             "tokens_entrada": t_in, "tokens_salida": t_out, "generado": _iso(generado),
         }
+    return salida
+
+
+def marcar(conexion, id_: int, estado: str, usuario: str, ahora: Optional[datetime] = None):
+    """Confirma o descarta un incidente y guarda quien y cuando (H-037).
+
+    Devuelve el incidente con la forma de la lista; None si no existe;
+    TERMINAL si ya esta cerrado o descartado. La condicion va en el mismo
+    UPDATE, como en el cierre del detector, para que ninguno pise al otro si
+    coinciden.
+    """
+    if estado not in MANUALES:
+        raise ValueError(f"estado manual desconocido {estado!r}")
+    ahora = _utc(ahora) or datetime.now(timezone.utc)
+    columnas = ", ".join(_COLUMNAS)
+    with conexion.cursor() as cur:
+        cur.execute(
+            "UPDATE anomalias SET estado = %s, marcada_por = %s, marcada_en = %s "
+            "WHERE id = %s AND estado <> ALL(%s) "
+            f"RETURNING {columnas}, EXISTS (SELECT 1 FROM diagnosticos d WHERE d.anomalia_id = anomalias.id)",
+            (estado, usuario, ahora, id_, list(TERMINALES)),
+        )
+        fila = cur.fetchone()
+        if fila is None:
+            cur.execute("SELECT 1 FROM anomalias WHERE id = %s", (id_,))
+            existe = cur.fetchone() is not None
+    conexion.commit()
+    if fila is None:
+        return TERMINAL if existe else None
+    salida = resumen({**dict(zip(_COLUMNAS, fila[:-1])), "tiene_diagnostico": bool(fila[-1])})
+    salida["marcada_por"] = usuario
+    salida["marcada_en"] = _iso(ahora)
     return salida
 
 
