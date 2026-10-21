@@ -102,7 +102,7 @@ Desde la pantalla de costos, con un rol que tenga `costos:importar`. Otra opció
 ### Incidentes (pantalla 3)
 
 - **Orden:** primero los abiertos (detectada, con hipótesis, confirmada), luego por severidad y luego por inicio. El contrato ya los entrega por severidad e inicio; la interfaz solo sube los abiertos.
-- **Falso positivo en un clic.** El botón está en la fila y llama a `POST /api/incidentes/{id}/estado`. Como el contrato no fija qué responde esa ruta, el cambio se refleja en la interfaz y el siguiente refresco trae lo que diga la API.
+- **Falso positivo en un clic.** El botón está en la fila y llama a `POST /api/incidentes/{id}/estado` (H-037). La fila toma el incidente que responde la API. Si responde 409 (ya estaba cerrado o descartado), lo dice y el siguiente refresco pone la lista al día.
 - **Una columna "Hipótesis"** dice si ya hay diagnóstico (`tiene_diagnostico`).
 
 ### Detalle del incidente (pantalla 4)

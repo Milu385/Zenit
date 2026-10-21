@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api } from "../api";
+import { api, ErrorApi } from "../api";
 import { SinDatos } from "../componentes/Estados";
 import { InsigniaIncidente, InsigniaSeveridad } from "../componentes/Insignias";
 import Marco from "../componentes/Marco";
@@ -45,13 +45,15 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
     setError(null);
     setHecho(null);
     try {
-      await api.cambiarEstado(i.id, "falso_positivo");
-      // el contrato no fija la respuesta: se refleja el cambio aqui y el
-      // siguiente refresco trae lo que diga la API
-      actualizar({ ...i, estado: "falso_positivo" });
+      const { marcada_por: _p, marcada_en: _e, ...nuevo } = await api.cambiarEstado(i.id, "falso_positivo");
+      actualizar(nuevo);
       setHecho(`Incidente ${i.id} marcado como falso positivo.`);
     } catch (e) {
-      setError(`No se pudo marcar el incidente ${i.id}: ${e instanceof Error ? e.message : e}`);
+      setError(
+        e instanceof ErrorApi && e.estado === 409
+          ? `El incidente ${i.id} ya estaba cerrado o descartado; la lista se pone al dia en el siguiente refresco.`
+          : `No se pudo marcar el incidente ${i.id}: ${e instanceof Error ? e.message : e}`,
+      );
     } finally {
       setMarcando(null);
     }

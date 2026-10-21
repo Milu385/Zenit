@@ -121,8 +121,11 @@ export type DetalleIncidente = Omit<Incidente, "tiene_diagnostico"> & {
   diagnostico: Diagnostico | null; // null si todavia no se genero
 };
 
-// POST /api/incidentes/{id}/estado. Solo esas dos transiciones son manuales.
+// POST /api/incidentes/{id}/estado (H-037). Solo esas dos transiciones son
+// manuales. 409 si el incidente ya esta cerrado o descartado.
 export type PeticionEstado = { estado: "confirmada" | "falso_positivo" };
+// Lo que responde: el incidente como queda, con quien lo marco y cuando.
+export type IncidenteMarcado = Incidente & { marcada_por: string; marcada_en: string };
 
 // ---------------------------------------------------------- gobernanza (§3)
 
