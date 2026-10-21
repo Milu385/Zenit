@@ -73,6 +73,14 @@ def listar(conexion, *, estado: Optional[str] = None, activo: Optional[str] = No
     return [resumen({**dict(zip(_COLUMNAS, f[:-1])), "tiene_diagnostico": bool(f[-1])}) for f in filas]
 
 
+def anomalia(conexion, id_: int) -> Optional[dict]:
+    """La fila cruda de `anomalias`, con fechas como datetime, o None si no existe."""
+    with conexion.cursor() as cur:
+        cur.execute(f"SELECT {', '.join(_COLUMNAS)} FROM anomalias WHERE id = %s", (id_,))
+        fila = cur.fetchone()
+    return dict(zip(_COLUMNAS, fila)) if fila else None
+
+
 def obtener(conexion, id_: int, ahora: Optional[datetime] = None) -> Optional[dict]:
     """El incidente con su evidencia y su diagnostico mas reciente, o None si no existe."""
     with conexion.cursor() as cur:
@@ -152,7 +160,9 @@ def evidencia_publica(a: dict, ahora: Optional[datetime] = None) -> dict:
 
     - `ventana` pasa a ser {desde, hasta}: desde = inicio menos la ventana de
       linea base; hasta = fin, o ahora si sigue abierta.
-    - `metricas_relacionadas` existe siempre (lista vacia hasta H-039).
+    - `metricas_relacionadas` existe siempre: las senales del detector que
+      miran el mismo tipo de fallo (H-039). La lista completa, con registros y
+      trazas, esta en `GET /api/incidentes/{id}/evidencia`.
     - El resto de lo que guardo el detector se conserva tal cual.
     """
     cruda = dict(a.get("evidencia") or {})
@@ -166,8 +176,12 @@ def evidencia_publica(a: dict, ahora: Optional[datetime] = None) -> dict:
         cruda["ventana_minutos"] = minutos
         intervalo = {"desde": _iso(inicio - timedelta(minutes=minutos)), "hasta": _iso(max(fin, inicio))}
     cruda["ventana"] = intervalo
+    cruda.setdefault("metricas_relacionadas", [])
     cruda.setdefault("valor_observado", None)
     cruda.setdefault("valor_esperado", None)
     cruda.setdefault("metodo", a.get("version_modelo"))
-    cruda.setdefault("metricas_relacionadas", [])
+    if not cruda.get("metricas_relacionadas") and a.get("metrica"):
+        from zenit.diagnostico.evidencia import metricas_relacionadas
+
+        cruda["metricas_relacionadas"] = metricas_relacionadas(a["metrica"], a.get("dimensiones") or {})
     return cruda

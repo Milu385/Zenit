@@ -191,6 +191,7 @@ Preguntas abiertas:
 |---|---|
 | `GET /api/activos` y `/api/activos/{id}` con la forma ampliada (estado, `ultima_recepcion`, `incidentes_abiertos`, `cpu_reciente`) | El backend sigue devolviendo `{id, claves}`. Depende de la tabla `anomalias` del detector para `incidentes_abiertos` y `atencion` |
 | `GET /api/incidentes` y `/{id}` | Construidas (H-038). Leen `anomalias` y el diagnóstico más reciente de `diagnosticos`. La evidencia sale con `ventana: {desde, hasta}` (desde = inicio menos la ventana de línea base; hasta = fin, o ahora si sigue abierta) y `metricas_relacionadas: []` hasta H-039 |
+| `GET /api/incidentes/{id}/evidencia` | Construida (H-039), fuera del contrato 1.2. La serie afectada filtrada por sus dimensiones, las métricas relacionadas por tipo de fallo (`fallas` de `senales.py`), registros de error, trazas con error y la correlación del motor analítico. Lo que no se pudo recuperar va en `faltantes`. Desde H-039, `metricas_relacionadas` del detalle ya no sale vacía |
 | `POST /api/incidentes/{id}/estado` | Construida (H-037). Guarda `marcada_por` y `marcada_en` en `anomalias`. Ver la sección 3 |
 | `POST /api/incidentes/{id}/diagnostico` | Pendiente: H-040 (Juan José) |
 | `GET /api/laboratorio/inyecciones` | Solo en el simulador |
