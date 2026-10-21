@@ -193,7 +193,7 @@ Preguntas abiertas:
 | `GET /api/incidentes` y `/{id}` | Construidas (H-038). Leen `anomalias` y el diagnóstico más reciente de `diagnosticos`. La evidencia sale con `ventana: {desde, hasta}` (desde = inicio menos la ventana de línea base; hasta = fin, o ahora si sigue abierta) y `metricas_relacionadas: []` hasta H-039 |
 | `GET /api/incidentes/{id}/evidencia` | Construida (H-039), fuera del contrato 1.2. La serie afectada filtrada por sus dimensiones, las métricas relacionadas por tipo de fallo (`fallas` de `senales.py`), registros de error, trazas con error y la correlación del motor analítico. Lo que no se pudo recuperar va en `faltantes`. Desde H-039, `metricas_relacionadas` del detalle ya no sale vacía |
 | `POST /api/incidentes/{id}/estado` | Construida (H-037). Guarda `marcada_por` y `marcada_en` en `anomalias`. Ver la sección 3 |
-| `POST /api/incidentes/{id}/diagnostico` | Pendiente: H-040 (Juan José) |
+| `POST /api/incidentes/{id}/diagnostico` | Construida (H-040). Responde 200 con el diagnóstico en el momento; nunca 202. 502 si el proveedor del modelo falla (el incidente queda igual), 503 si falta `ZENIT_MODELO_DIAGNOSTICO`, `ANTHROPIC_API_KEY` o la redacción de H-041. El servicio `diagnosticador` genera solo los de severidad media y alta en menos de 60 s; los demás, a pedido |
 | `GET /api/laboratorio/inyecciones` | Solo en el simulador |
 | Registros y trazas como evidencia | El wireframe los pide, pero la evidencia del contrato v1 solo trae métricas. La pantalla lo dice |
 | Tendencia de costos en el tiempo y activos subutilizados (pantalla 6) | No están en el contrato |
