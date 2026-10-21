@@ -319,6 +319,23 @@ def crear_app(
             raise HTTPException(404, detail=f"no existe el incidente {id_incidente}")
         return encontrado
 
+    @app.get("/api/incidentes/{id_incidente}/evidencia", tags=["incidentes"])
+    @requiere("incidentes:ver")
+    def evidencia_incidente(id_incidente: int):
+        """Lo que paso en metricas, registros y trazas en la ventana del incidente (H-039).
+
+        La serie afectada con sus dimensiones exactas, las metricas relacionadas
+        con el mismo tipo de fallo, los registros de error, las trazas con error
+        y la correlacion entre ambos, que sale de una consulta al motor
+        analitico. Si un almacen no responde, `faltantes` dice que no se pudo
+        recuperar y el resto se devuelve igual."""
+        from zenit.diagnostico.evidencia import recuperar
+
+        fila = _pg(lambda c: incidentes.anomalia(c, id_incidente)) if pg_url else None
+        if fila is None:
+            raise HTTPException(404, detail=f"no existe el incidente {id_incidente}")
+        return _serializar(recuperar(fila, repositorio, analitico))
+
     @app.post("/api/incidentes/{id_incidente}/estado", tags=["incidentes"])
     @requiere("incidentes:gestionar")
     def marcar_incidente(id_incidente: int, datos: PeticionEstado, request: Request):

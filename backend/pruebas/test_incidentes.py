@@ -150,7 +150,8 @@ def test_detalle_sin_diagnostico_trae_la_evidencia(pg):
     assert d["diagnostico"] is None and d["tiene_diagnostico"] is False
     assert d["evidencia"]["valor_observado"] == 0.9
     assert d["evidencia"]["ventana"]["desde"] == (T0 - timedelta(minutes=60)).isoformat()
-    assert d["evidencia"]["metricas_relacionadas"] == []
+    # la anomalia es de CPU (state=user): trae las otras senales de CPU (H-039)
+    assert "system_cpu_load_average_1m" in d["evidencia"]["metricas_relacionadas"]
     assert d["version_modelo"] == "mad-v1 W=60 z=3.5 m=3"
     assert api.get("/api/incidentes", params={"activo": "activo-a"}).json()[0]["tiene_diagnostico"] is False
 
