@@ -88,8 +88,8 @@ def test_la_restauracion_de_una_caida_reintenta(registro, monkeypatch):
 
 
 def test_configuracion_invalida_se_explica():
-    with pytest.raises(ConfigInvalida, match="latencia"):
-        Config(nodo="n", tipos=("cpu", "latencia")).validar()
+    with pytest.raises(ConfigInvalida, match="terremoto"):
+        Config(nodo="n", tipos=("cpu", "terremoto")).validar()
     with pytest.raises(ConfigInvalida, match="SERVICIOS_CAIDA"):
         Config(nodo="n", servicios_caida=()).validar()
     with pytest.raises(ConfigInvalida, match="INTERVALO"):

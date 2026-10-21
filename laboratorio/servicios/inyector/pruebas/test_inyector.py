@@ -272,7 +272,7 @@ def test_calendario_respeta_calentamiento_intervalos_y_normalidad(cfg):
     tipos = {s["tipo"] for s in specs}
     assert tipos == set(cfg.tipos)
     for s in specs:  # cada especificacion se puede fabricar
-        assert fabricar(s, cfg).tipo in ("cpu", "memoria", "disco", "caida")
+        assert fabricar(s, cfg).tipo in ("cpu", "memoria", "disco", "caida", "latencia")
 
 
 def test_mirar_el_plan_no_arranca_la_campana(cfg):

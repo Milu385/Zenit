@@ -1,4 +1,4 @@
-"""Los fallos que el inyector sabe provocar (H-025, H-026, H-028).
+"""Los fallos que el inyector sabe provocar (H-025, H-026, H-027, H-028).
 
 Cada fallo tiene tres pasos: iniciar, mantener hasta su fin y restaurar.
 Restaurar se llama siempre, tambien si iniciar o mantener fallaron, y es
@@ -7,7 +7,8 @@ idempotente: llamarlo dos veces no hace dano.
 Topes de seguridad. Un fallo inyectado no puede tumbar lo que se esta
 midiendo: si el agente muere, la inyeccion queda sin datos y no sirve. Por
 eso la CPU no pasa del 90 %, la memoria ocupada no pasa del 85 % del total y
-el disco no pasa del 85 % del sistema de archivos.
+el disco no pasa del 85 % del sistema de archivos. La latencia no pasa de
+2 s ni la perdida de paquetes del 30 %: mas que eso ya es una caida.
 """
 from __future__ import annotations
 
@@ -28,6 +29,9 @@ TOPE_CPU = 90          # %
 TOPE_MEMORIA = 0.85    # fraccion del total ocupada al final
 TOPE_DISCO = 0.85      # fraccion del sistema de archivos ocupada al final
 PASO_DISCO_S = 30      # cada cuanto crece la saturacion gradual
+TOPE_RETARDO_MS = 2000
+TOPE_PERDIDA = 30      # %
+REVISAR_ENLACE_S = 15  # cada cuanto se comprueba que la degradacion sigue puesta
 
 
 class ErrorFalla(Exception):
@@ -346,3 +350,159 @@ class Caida(Falla):
 
     def extra_cierre(self) -> dict:
         return {"restablecido": self._restablecido} if self._restablecido else {}
+
+
+# ------------------------------------------------------------------ latencia en un enlace
+class _Exec:
+    """Corre ordenes dentro de un contenedor del nodo por el socket de Docker."""
+
+    def __init__(self, contenedor):
+        self.c = contenedor
+
+    def __call__(self, *orden: str, puede_fallar: bool = False) -> str:
+        r = self.c.exec_run(list(orden))
+        salida = (r.output or b"").decode(errors="replace").strip()
+        if r.exit_code != 0 and not puede_fallar:
+            raise ErrorFalla(f"{' '.join(orden)} fallo en {self.c.name} ({r.exit_code}): {salida[:200]}")
+        return salida
+
+
+def ip_en_red_comun(origen, destino) -> str:
+    """La IP del destino en una red que comparte con el origen."""
+    redes_o = (origen.attrs.get("NetworkSettings") or {}).get("Networks") or {}
+    redes_d = (destino.attrs.get("NetworkSettings") or {}).get("Networks") or {}
+    for nombre, red in sorted(redes_d.items()):
+        if nombre in redes_o and red.get("IPAddress"):
+            return red["IPAddress"]
+    raise ErrorFalla(f"{origen.name} y {destino.name} no comparten una red de Docker")
+
+
+def interfaz_hacia(ejecutar: _Exec, ip: str) -> str:
+    """La interfaz por la que sale el trafico hacia esa IP, segun `ip route get`."""
+    partes = ejecutar("ip", "-o", "route", "get", ip).split()
+    if "dev" not in partes or partes.index("dev") + 1 >= len(partes):
+        raise ErrorFalla(f"no se sabe por que interfaz se llega a {ip}")
+    return partes[partes.index("dev") + 1]
+
+
+def quitar_netem(ejecutar: _Exec, interfaz: str) -> bool:
+    """Borra la disciplina raiz si es la que pone el inyector. Idempotente.
+
+    Devuelve True si habia algo que quitar."""
+    actual = ejecutar("tc", "qdisc", "show", "dev", interfaz, puede_fallar=True)
+    if "netem" not in actual:
+        return False
+    ejecutar("tc", "qdisc", "del", "dev", interfaz, "root", puede_fallar=True)
+    if "netem" in ejecutar("tc", "qdisc", "show", "dev", interfaz, puede_fallar=True):
+        raise ErrorFalla(f"no se pudo quitar netem de {interfaz}")
+    return True
+
+
+@dataclass
+class Latencia(Falla):
+    """Degrada UN enlace entre servicios, no el nodo (H-027).
+
+    Con tc netem dentro del contenedor de origen se retrasa y se pierde solo el
+    trafico que sale hacia la IP del destino; el resto del contenedor y el
+    nodo siguen igual. El origen necesita cap_add NET_ADMIN y las ordenes ip y
+    tc (iproute2), ver laboratorio/compose.yml.
+
+    La verdad de referencia dice donde esta la causa (el destino: el enlace
+    hacia el es el lento) y donde se manifiesta (el origen: sus peticiones
+    tardan o fallan). Es lo que H-029 usa para saber si el diagnostico apunto
+    al componente correcto.
+    """
+    origen: str = "pedidos"
+    destino: str = "catalogo"
+    retardo_ms: int = 300
+    variacion_ms: int = 50
+    perdida: float = 0.0           # % de paquetes
+    proyecto: str = "zenit-laboratorio"
+    cliente: object = field(default=None, repr=False)
+    _ejecutar: Optional[_Exec] = field(default=None, repr=False)
+    _interfaz: Optional[str] = field(default=None, repr=False)
+    _ultima_revision: float = field(default=0.0, repr=False)
+
+    def __post_init__(self):
+        self.tipo = "latencia"
+        if self.origen == self.destino:
+            raise ValueError("origen y destino tienen que ser servicios distintos")
+        self.retardo_ms = max(1, min(int(self.retardo_ms), TOPE_RETARDO_MS))
+        self.variacion_ms = max(0, min(int(self.variacion_ms), self.retardo_ms))
+        self.perdida = max(0.0, min(float(self.perdida), TOPE_PERDIDA))
+        self.causa_en, self.manifiesta_en = self.destino, self.origen
+        self.intensidad = f"{self.retardo_ms}ms±{self.variacion_ms}ms perdida {self.perdida:g}%"
+        self.parametros = {**self.parametros, "duracion_s": self.duracion_s, "origen": self.origen,
+                           "destino": self.destino, "retardo_ms": self.retardo_ms,
+                           "variacion_ms": self.variacion_ms, "perdida": self.perdida}
+
+    def _netem(self) -> list[str]:
+        orden = ["delay", f"{self.retardo_ms}ms"]
+        if self.variacion_ms:
+            orden += [f"{self.variacion_ms}ms", "distribution", "normal"]
+        if self.perdida:
+            orden += ["loss", f"{self.perdida:g}%"]
+        return orden
+
+    def iniciar(self) -> None:
+        if self.cliente is None:
+            import docker  # solo hace falta dentro del contenedor del inyector
+            self.cliente = docker.from_env()
+        origen = contenedor_de(self.cliente, self.proyecto, self.origen)
+        destino = contenedor_de(self.cliente, self.proyecto, self.destino)
+        for c in (origen, destino):
+            c.reload()
+            if c.status != "running":
+                raise ErrorFalla(f"{c.name} no esta en marcha: no hay enlace que degradar")
+        ip = ip_en_red_comun(origen, destino)
+        self._ejecutar = _Exec(origen)
+        self._interfaz = interfaz_hacia(self._ejecutar, ip)
+        # una inyeccion anterior que no se restauro no puede sumarse a esta
+        if quitar_netem(self._ejecutar, self._interfaz):
+            self.detalle["netem_previo_quitado"] = True
+        e, i = self._ejecutar, self._interfaz
+        # prio con 4 bandas: el priomap por defecto solo usa las 3 primeras, asi
+        # que a la cuarta (1:4, con netem) solo llega lo que manda el filtro
+        e("tc", "qdisc", "add", "dev", i, "root", "handle", "1:", "prio", "bands", "4")
+        try:
+            e("tc", "qdisc", "add", "dev", i, "parent", "1:4", "handle", "40:", "netem", *self._netem())
+            e("tc", "filter", "add", "dev", i, "protocol", "ip", "parent", "1:0", "prio", "1",
+              "u32", "match", "ip", "dst", f"{ip}/32", "flowid", "1:4")
+        except ErrorFalla:
+            quitar_netem(e, i)
+            raise
+        self.detalle.update({"ip_destino": ip, "interfaz": i, "contenedor": origen.name})
+        self._ultima_revision = time.monotonic()
+
+    def revisar(self) -> None:
+        # si el origen se reinicio, su red volvio a la normalidad: el fallo dejo de existir
+        if time.monotonic() - self._ultima_revision < REVISAR_ENLACE_S:
+            return
+        self._ultima_revision = time.monotonic()
+        actual = self._ejecutar("tc", "qdisc", "show", "dev", self._interfaz, puede_fallar=True)
+        if "netem" not in actual:
+            raise ErrorFalla(f"el enlace {self.origen} -> {self.destino} se restablecio antes de tiempo")
+
+    def restaurar(self) -> None:
+        if self._ejecutar is None or self._interfaz is None:
+            return
+        quitar_netem(self._ejecutar, self._interfaz)
+
+
+def restaurar_enlaces(cliente, proyecto: str, servicios) -> list[str]:
+    """Quita netem de los servicios que hayan quedado degradados por una
+    interrupcion. Devuelve en cuales habia algo."""
+    restaurados = []
+    for servicio in servicios:
+        c = contenedor_de(cliente, proyecto, servicio)
+        c.reload()
+        if c.status != "running":
+            continue          # al arrancar de nuevo, su red empieza limpia
+        e = _Exec(c)
+        for linea in e("ip", "-o", "link", "show", puede_fallar=True).splitlines():
+            partes = linea.split(":")
+            if len(partes) > 1:
+                interfaz = partes[1].strip().split("@")[0]
+                if interfaz and interfaz != "lo" and quitar_netem(e, interfaz):
+                    restaurados.append(f"{servicio}/{interfaz}")
+    return restaurados
