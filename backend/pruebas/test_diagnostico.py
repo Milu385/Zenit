@@ -167,7 +167,7 @@ def test_la_version_del_modelo_es_fija(monkeypatch):
     assert modelo.modelo_configurado() == "claude-version-fija-20260101"
 
 
-def test_el_cliente_envia_la_version_y_temperatura_cero(monkeypatch):
+def test_el_cliente_envia_la_version_sin_pensamiento_previo(monkeypatch):
     vistas = {}
 
     def urlopen(peticion, timeout):
@@ -178,7 +178,10 @@ def test_el_cliente_envia_la_version_y_temperatura_cero(monkeypatch):
 
     monkeypatch.setattr(modelo.urllib.request, "urlopen", urlopen)
     r = modelo.ClienteAnthropic("clave", "claude-version-fija").generar("sistema", "mensaje")
-    assert vistas["cuerpo"]["model"] == "claude-version-fija" and vistas["cuerpo"]["temperature"] == 0
+    assert vistas["cuerpo"]["model"] == "claude-version-fija"
+    assert "temperature" not in vistas["cuerpo"]                       # 400 en los modelos 5.5
+    assert vistas["cuerpo"]["thinking"] == {"type": "between_tools"}
+    assert vistas["cuerpo"]["output_config"] == {"effort": "low"}
     assert vistas["cabeceras"]["X-api-key"] == "clave"
     assert (r.tokens_entrada, r.tokens_salida, r.modelo) == (10, 3, "claude-version-fija")
 
@@ -293,3 +296,23 @@ def test_api_sin_modelo_configurado_es_503():
                                **opciones()), "operador")
     r = api.post("/api/incidentes/1/diagnostico")
     assert r.status_code == 503 and "ZENIT_MODELO_DIAGNOSTICO" in r.json()["detail"]
+
+
+def test_una_respuesta_cortada_es_un_error(monkeypatch):
+    def urlopen(peticion, timeout):
+        return io.BytesIO(json.dumps({"model": "m", "stop_reason": "max_tokens",
+                                      "content": [{"type": "text", "text": "{\"hipotesis\": \"incompl"}]}).encode())
+
+    monkeypatch.setattr(modelo.urllib.request, "urlopen", urlopen)
+    with pytest.raises(ErrorModelo, match="cortada"):
+        modelo.ClienteAnthropic("clave", "m").generar("s", "m")
+
+
+def test_el_esfuerzo_se_valida(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("ZENIT_MODELO_DIAGNOSTICO", "claude-sonnet-5-5")
+    monkeypatch.setenv("ZENIT_DIAGNOSTICO_ESFUERZO", "max")
+    with pytest.raises(modelo.SinConfiguracion):
+        modelo.ClienteAnthropic.desde_entorno()
+    monkeypatch.setenv("ZENIT_DIAGNOSTICO_ESFUERZO", "medium")
+    assert modelo.ClienteAnthropic.desde_entorno().esfuerzo == "medium"

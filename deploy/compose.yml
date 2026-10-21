@@ -291,6 +291,7 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ZENIT_MODELO_DIAGNOSTICO: ${ZENIT_MODELO_DIAGNOSTICO:-}
       ZENIT_DIAGNOSTICO_SEVERIDADES: ${ZENIT_DIAGNOSTICO_SEVERIDADES:-alta,media}
+      ZENIT_DIAGNOSTICO_ESFUERZO: ${ZENIT_DIAGNOSTICO_ESFUERZO:-low}
     depends_on:
       postgres-esquema:
         condition: service_completed_successfully
@@ -314,6 +315,7 @@ services:
       # diagnostico a pedido (H-040); sin ellas la ruta responde 503
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ZENIT_MODELO_DIAGNOSTICO: ${ZENIT_MODELO_DIAGNOSTICO:-}
+      ZENIT_DIAGNOSTICO_ESFUERZO: ${ZENIT_DIAGNOSTICO_ESFUERZO:-low}
     volumes:
       - ./catalogo:/etc/zenit/catalogo:ro
       - ./gobernanza:/etc/zenit/gobernanza:ro
