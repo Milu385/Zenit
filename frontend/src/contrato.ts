@@ -99,8 +99,8 @@ export type Incidente = {
 
 export type Evidencia = {
   ventana: { desde: string; hasta: string };
-  valor_observado: number;
-  valor_esperado: number;
+  valor_observado: number | null; // null si el detector no lo guardo (H-038)
+  valor_esperado: number | null;
   metodo: string;
   metricas_relacionadas: string[];
 };
@@ -119,6 +119,9 @@ export type Diagnostico = {
 export type DetalleIncidente = Omit<Incidente, "tiene_diagnostico"> & {
   evidencia: Evidencia; // existe siempre, aunque el diagnostico falle
   diagnostico: Diagnostico | null; // null si todavia no se genero
+  version_modelo: string; // del detector (RNF-REP-02)
+  marcada_por: string | null; // quien confirmo o descarto (H-037)
+  marcada_en: string | null;
 };
 
 // POST /api/incidentes/{id}/estado (H-037). Solo esas dos transiciones son
