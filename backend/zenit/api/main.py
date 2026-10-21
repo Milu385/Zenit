@@ -16,7 +16,7 @@ import os
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -90,6 +90,11 @@ def _activo_publico(a: dict, salud_activo: Optional[dict] = None) -> dict:
 class PeticionSesion(BaseModel):
     usuario: str = Field(min_length=1, max_length=120)
     clave: str = Field(min_length=1, max_length=200)
+
+
+class PeticionEstado(BaseModel):
+    """Las dos transiciones manuales de un incidente (H-037); otro valor es 422."""
+    estado: Literal["confirmada", "falso_positivo"]
 
 
 def _leer_catalogo(ruta: Path) -> dict:
@@ -313,6 +318,24 @@ def crear_app(
         if encontrado is None:
             raise HTTPException(404, detail=f"no existe el incidente {id_incidente}")
         return encontrado
+
+    @app.post("/api/incidentes/{id_incidente}/estado", tags=["incidentes"])
+    @requiere("incidentes:gestionar")
+    def marcar_incidente(id_incidente: int, datos: PeticionEstado, request: Request):
+        """Confirma un incidente o lo marca como falso positivo (H-037).
+
+        Son las dos unicas transiciones manuales; el resto las hace el detector.
+        Guarda quien y cuando en `marcada_por` y `marcada_en`. Un incidente
+        cerrado o ya descartado no cambia (409). Responde el incidente con la
+        forma de la lista."""
+        if not pg_url:
+            raise HTTPException(404, detail=f"no existe el incidente {id_incidente}")
+        r = _pg(lambda c: incidentes.marcar(c, id_incidente, datos.estado, identidad(request).usuario))
+        if r is None:
+            raise HTTPException(404, detail=f"no existe el incidente {id_incidente}")
+        if r is incidentes.TERMINAL:
+            raise HTTPException(409, detail=f"el incidente {id_incidente} ya esta cerrado o descartado")
+        return r
 
     # ---------------------------------------------------------------- registros y trazas
     def _analitico():

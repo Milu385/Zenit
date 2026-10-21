@@ -169,7 +169,7 @@ Lo que se agregó y que no estaba en `contrato-api-v1.md`. En el código va marc
 
 Preguntas abiertas:
 
-- **¿Qué responde `POST /api/incidentes/{id}/estado`?** La interfaz no depende de eso, pero conviene fijarlo.
+- **`POST /api/incidentes/{id}/estado` (H-037).** Cuerpo `{"estado": "confirmada" | "falso_positivo"}`; otro valor es 422. Responde 200 con el incidente en la forma de la lista más `marcada_por` y `marcada_en`. Un incidente `cerrada` o `falso_positivo` responde 409, igual que el detector los trata como terminales; `confirmada` sí se puede cambiar a falso positivo. 404 si no existe. Falta que el equipo lo pase al contrato.
 - **¿Hace falta revocar sesiones?** Hoy no hay cierre de sesión en el servidor (`DELETE /api/sesion`).
 - **¿La factura de AWS y Azure?** Por ahora solo se lee el CSV de DigitalOcean.
 
@@ -181,7 +181,8 @@ Preguntas abiertas:
 |---|---|
 | `GET /api/activos` y `/api/activos/{id}` con la forma ampliada (estado, `ultima_recepcion`, `incidentes_abiertos`, `cpu_reciente`) | El backend sigue devolviendo `{id, claves}`. Depende de la tabla `anomalias` del detector para `incidentes_abiertos` y `atencion` |
 | `GET /api/incidentes` y `/{id}` | Construidas (H-038). Leen `anomalias` y el diagnóstico más reciente de `diagnosticos`. La evidencia sale con `ventana: {desde, hasta}` (desde = inicio menos la ventana de línea base; hasta = fin, o ahora si sigue abierta) y `metricas_relacionadas: []` hasta H-039 |
-| `POST /api/incidentes/{id}/estado` y `/diagnostico` | Pendientes: `/estado` es H-037 (Daniel) y `/diagnostico` es H-040 (Juan José) |
+| `POST /api/incidentes/{id}/estado` | Construida (H-037). Guarda `marcada_por` y `marcada_en` en `anomalias`. Ver la sección 3 |
+| `POST /api/incidentes/{id}/diagnostico` | Pendiente: H-040 (Juan José) |
 | `GET /api/laboratorio/inyecciones` | Solo en el simulador |
 | Registros y trazas como evidencia | El wireframe los pide, pero la evidencia del contrato v1 solo trae métricas. La pantalla lo dice |
 | Tendencia de costos en el tiempo y activos subutilizados (pantalla 6) | No están en el contrato |
