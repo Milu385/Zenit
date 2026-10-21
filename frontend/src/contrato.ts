@@ -154,6 +154,64 @@ export type ResumenImportacion = {
   lineas_sin_asignar: { concepto: string; producto: string; monto: number; motivo: string }[];
 };
 
+// ------------------------------------------------- fuentes (1.2, H-021, H-011)
+
+// degradado: mas de 5 min sin recibir metricas; sin_datos: nunca reporto
+export type EstadoFuente = "ok" | "degradado" | "sin_datos";
+export type Senal = "metricas" | "registros" | "trazas";
+
+export type SenalFuente = {
+  ultima_recepcion: string;
+  estado: EstadoFuente;
+  recibidas_total: number;
+  errores_total: number;
+  recibidas_5min: number;
+  errores_1h: number;
+};
+
+// GET /api/fuentes: una por activo y host.name, las degradadas primero
+export type Fuente = {
+  activo: string; // "sin_resolver" para las huerfanas
+  host_name: string;
+  proveedor: string | null;
+  huerfana: boolean;
+  senales: Partial<Record<Senal, SenalFuente>>;
+  ultima_recepcion: string | null;
+  estado: EstadoFuente;
+  minutos_sin_datos: number | null;
+};
+
+// GET /api/fuentes/huerfanas: origenes que no resolvieron contra el catalogo
+export type Huerfana = {
+  clave: string; // valor de host.name u otra clave nativa
+  tipo_clave: string;
+  proveedor: string | null;
+  metricas: number; // acumulados desde `primera`
+  registros: number;
+  trazas: number;
+  primera: string;
+  ultima: string;
+  asociada_a: string | null; // la telemetria previa ya se reasigno a ese activo
+  asociada_en: string | null;
+  resuelve_a: string | null; // la clave ya esta en el catalogo: asociable
+};
+
+export type EjecucionDescubrimiento = {
+  id: number;
+  proveedor: string;
+  inicio: string;
+  fin: string | null;
+  estado: "en_curso" | "ok" | "error";
+  vistos: number;
+  nuevos: number;
+  retirados: number;
+  reactivados: number;
+  error: string | null;
+};
+
+// GET /api/catalogo/descubrimientos
+export type Descubrimientos = { ultimas: EjecucionDescubrimiento[]; recientes: EjecucionDescubrimiento[] };
+
 // --------------------------------------------------------- laboratorio (§3)
 
 // GET /api/laboratorio/inyecciones: las filas de la tabla inyecciones (§4).

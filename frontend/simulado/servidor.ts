@@ -241,6 +241,15 @@ const RUTAS: Ruta[] = [
   },
 
   // ---- laboratorio
+  // ---- fuentes (1.2)
+  { metodo: "GET", patron: /^\/api\/fuentes$/, permiso: "fuentes:ver", h: () => (escenario() === "vacio" ? [] : d.fuentes()) },
+  { metodo: "GET", patron: /^\/api\/fuentes\/huerfanas$/, permiso: "fuentes:ver", h: () => (escenario() === "vacio" ? [] : d.huerfanas()) },
+  {
+    metodo: "GET",
+    patron: /^\/api\/catalogo\/descubrimientos$/,
+    permiso: "fuentes:ver",
+    h: () => (escenario() === "vacio" ? { ultimas: [], recientes: [] } : d.descubrimientos()),
+  },
   { metodo: "GET", patron: /^\/api\/laboratorio\/inyecciones$/, permiso: "laboratorio:ver", h: () => d.inyecciones() },
 ];
 

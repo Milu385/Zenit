@@ -5,6 +5,7 @@ import Configuraciones from "./pantallas/Configuraciones";
 import Costos from "./pantallas/Costos";
 import DetalleActivo from "./pantallas/DetalleActivo";
 import DetalleIncidente from "./pantallas/DetalleIncidente";
+import Fuentes from "./pantallas/Fuentes";
 import Incidentes from "./pantallas/Incidentes";
 import Inventario from "./pantallas/Inventario";
 import Login from "./pantallas/Login";
@@ -17,6 +18,7 @@ import { ProveedorSesion, useSesion } from "./sesion";
 //   /incidentes/:id   4 detalle del incidente
 //   /configuraciones  5 reporte de configuraciones
 //   /costos           6 reporte de costos
+//   /fuentes          7 fuentes, huerfanos y descubrimiento (H-053)
 //   (sin sesion)      9 inicio de sesion
 
 function Rutas() {
@@ -38,6 +40,7 @@ function Rutas() {
   if ((p = coincide("/incidentes/:id", ruta))) return <DetalleIncidente id={p.id} />;
   if (ruta === "/configuraciones") return <Configuraciones />;
   if (ruta === "/costos") return <Costos />;
+  if (ruta === "/fuentes") return <Fuentes />;
   return (
     <Marco titulo="No encontrada">
       <SinDatos titulo="Esta pagina no existe" detalle={`No hay nada en ${ruta}.`} />

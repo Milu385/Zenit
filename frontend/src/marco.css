@@ -330,3 +330,13 @@ button { font: inherit; }
   .rejilla-dos { grid-template-columns: 1fr; }
 }
 .panel-amarillo .tabla .detalle { color: var(--tinta); opacity: 0.8; }
+
+/* ------------------------------------------- pantalla 7: fuentes (H-053) */
+
+.cifras-cuatro { grid-template-columns: repeat(4, 1fr); }
+.casilla { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; margin: 0 0 12px; }
+.texto-mal { color: var(--mal); }
+.fila-atenuada { color: var(--apagado); }
+@media (max-width: 760px) {
+  .cifras-cuatro { grid-template-columns: 1fr 1fr; }
+}

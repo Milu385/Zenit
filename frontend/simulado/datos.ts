@@ -2,12 +2,15 @@
 // cambia, `npm run build` falla aqui y no en la integracion.
 import type {
   Activo,
+  Descubrimientos,
   DetalleActivo,
   DetalleIncidente,
   Diagnostico,
   EstadoActivo,
   Evidencia,
+  Fuente,
   Hallazgo,
+  Huerfana,
   Incidente,
   Inyeccion,
   ReporteCostos,
@@ -514,6 +517,104 @@ export function costos(desde: string | null, hasta: string | null, vacio: boolea
     ],
     sin_asignar: 1.37,
   };
+}
+
+// ---------------------------------------------------------------- fuentes
+
+// Una fuente por activo vigente, con su retraso. Igual que la API: la regla de
+// degradado es mas de 5 min sin recibir metricas.
+export function fuentes(): Fuente[] {
+  const salida: Fuente[] = BASE.filter((b) => !b.retirado).map((b) => {
+    if (b.retraso_ms == null)
+      return { activo: b.id, host_name: b.nombre, proveedor: b.proveedor, huerfana: false, senales: {}, ultima_recepcion: null, estado: "sin_datos", minutos_sin_datos: null };
+    const estado = b.retraso_ms > 5 * MIN ? "degradado" : "ok";
+    const ultima = hace(b.retraso_ms);
+    const vivo = estado === "ok";
+    return {
+      activo: b.id,
+      host_name: b.nombre,
+      proveedor: b.proveedor,
+      huerfana: false,
+      senales: {
+        metricas: { ultima_recepcion: ultima, estado, recibidas_total: 812_340, errores_total: 3, recibidas_5min: vivo ? 2_730 : 0, errores_1h: 0 },
+        registros: { ultima_recepcion: ultima, estado, recibidas_total: 40_120, errores_total: 0, recibidas_5min: vivo ? 96 : 0, errores_1h: 0 },
+        ...(b.nombre.startsWith("zenit-nodo")
+          ? { trazas: { ultima_recepcion: hace(b.retraso_ms + 2 * MIN), estado, recibidas_total: 9_870, errores_total: vivo ? 0 : 12, recibidas_5min: vivo ? 41 : 0, errores_1h: vivo ? 0 : 4 } }
+          : {}),
+      },
+      ultima_recepcion: ultima,
+      estado,
+      minutos_sin_datos: Math.round(b.retraso_ms / 6_000) / 10,
+    };
+  });
+  const orden = { degradado: 0, sin_datos: 1, ok: 2 };
+  return salida.sort((a, b) => orden[a.estado] - orden[b.estado] || a.activo.localeCompare(b.activo));
+}
+
+export function huerfanas(): Huerfana[] {
+  return [
+    {
+      clave: "ip-10-0-3-17.ec2.internal",
+      tipo_clave: "host.name",
+      proveedor: "aws",
+      metricas: 18_204,
+      registros: 512,
+      trazas: 0,
+      primera: hace(95 * MIN),
+      ultima: hace(40_000),
+      asociada_a: null,
+      asociada_en: null,
+      resuelve_a: null,
+    },
+    {
+      clave: "srv-core-03",
+      tipo_clave: "host.name",
+      proveedor: null,
+      metricas: 3_960,
+      registros: 0,
+      trazas: 0,
+      primera: hace(3 * 60 * MIN),
+      ultima: hace(22 * MIN),
+      asociada_a: null,
+      asociada_en: null,
+      resuelve_a: "activo-onprem-03",
+    },
+    {
+      clave: "zenit-nodo-do-viejo",
+      tipo_clave: "host.name",
+      proveedor: "digitalocean",
+      metricas: 70_118,
+      registros: 2_310,
+      trazas: 845,
+      primera: hace(2 * 24 * 60 * MIN),
+      ultima: hace(26 * 60 * MIN),
+      asociada_a: "activo-do-nodo-01",
+      asociada_en: hace(25 * 60 * MIN),
+      resuelve_a: "activo-do-nodo-01",
+    },
+  ];
+}
+
+export function descubrimientos(): Descubrimientos {
+  const ej = (id: number, proveedor: string, haceMin: number, estado: "ok" | "error" | "en_curso", n: number[], error: string | null = null) => ({
+    id,
+    proveedor,
+    inicio: hace(haceMin * MIN),
+    fin: estado === "en_curso" ? null : hace(haceMin * MIN - 40_000),
+    estado,
+    vistos: n[0],
+    nuevos: n[1],
+    retirados: n[2],
+    reactivados: n[3],
+    error,
+  });
+  const ultimas = [
+    ej(9, "aws", 4, "ok", [3, 0, 0, 0]),
+    ej(8, "azure", 4, "error", [0, 0, 0, 0], "AuthorizationFailed: el principal no puede listar maquinas en la suscripcion"),
+    ej(7, "digitalocean", 5, "ok", [2, 1, 0, 0]),
+    ej(10, "proxmox", 1, "en_curso", [0, 0, 0, 0]),
+  ];
+  return { ultimas, recientes: [...ultimas, ej(3, "aws", 64, "ok", [4, 0, 1, 0])].sort((a, b) => b.inicio.localeCompare(a.inicio)) };
 }
 
 // ----------------------------------------------------------- laboratorio

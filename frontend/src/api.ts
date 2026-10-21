@@ -4,8 +4,11 @@ import type {
   Activo,
   DetalleActivo,
   DetalleIncidente,
+  Descubrimientos,
+  Fuente,
   Diagnostico,
   Hallazgo,
+  Huerfana,
   Incidente,
   PeticionEstado,
   PeticionSesion,
@@ -127,6 +130,11 @@ export const api = {
     pedir<unknown>(`/api/incidentes/${id}/estado`, { metodo: "POST", ...json({ estado } satisfies PeticionEstado) }),
   // 200 con el diagnostico si fue inmediato; 202 (undefined) si quedo en cola
   pedirDiagnostico: (id: number) => pedir<Diagnostico | undefined>(`/api/incidentes/${id}/diagnostico`, { metodo: "POST" }),
+
+  // fuentes (pantalla 7)
+  fuentes: (s?: AbortSignal) => pedir<Fuente[]>("/api/fuentes", { senal: s }),
+  huerfanas: (s?: AbortSignal) => pedir<Huerfana[]>("/api/fuentes/huerfanas", { senal: s }),
+  descubrimientos: (s?: AbortSignal) => pedir<Descubrimientos>("/api/catalogo/descubrimientos", { senal: s }),
 
   // gobernanza
   configuraciones: (s?: AbortSignal) => pedir<Hallazgo[]>("/api/gobernanza/configuraciones", { senal: s }),

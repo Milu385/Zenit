@@ -5,7 +5,7 @@ import { Enlace, useRuta } from "../enrutador";
 import { hace } from "../formato";
 import { NOMBRE_ROL, useSesion } from "../sesion";
 import { useCarga } from "../useCarga";
-import { IconoConfiguracion, IconoCostos, IconoIncidentes, IconoInfraestructura, IconoUsuario, Logo } from "./Iconos";
+import { IconoConfiguracion, IconoCostos, IconoFuentes, IconoIncidentes, IconoInfraestructura, IconoUsuario, Logo } from "./Iconos";
 
 // Diseno general de los wireframes: barra lateral negra, cabecera con titulo,
 // saludo y tres indicadores, y el contenido a la derecha.
@@ -15,6 +15,7 @@ const SECCIONES: { a: string; texto: string; permiso: Permiso; Icono: (p: { clas
   { a: "/incidentes", texto: "Incidentes", permiso: "incidentes:ver", Icono: IconoIncidentes },
   { a: "/configuraciones", texto: "Configuracion", permiso: "configuraciones:ver", Icono: IconoConfiguracion },
   { a: "/costos", texto: "Costos", permiso: "costos:ver", Icono: IconoCostos },
+  { a: "/fuentes", texto: "Fuentes", permiso: "fuentes:ver", Icono: IconoFuentes },
 ];
 
 function activa(a: string, ruta: string) {
