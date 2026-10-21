@@ -118,6 +118,14 @@ Desde la pantalla de costos, con un rol que tenga `costos:importar`. Otra opció
 - Usa `GET /api/activos/{id}` (con `claves`). Un 404 se muestra como "no hay un activo así", no como error.
 - Los incidentes se piden con `?activo=`. El costo atribuido solo aparece si el rol tiene `costos:ver`, y usa el periodo por defecto de la API.
 
+### Fuentes (pantalla 7, H-053)
+
+- **Solo administrador** (`fuentes:ver`). La sección aparece en la barra lateral solo con ese permiso.
+- **Arriba, cuatro cifras:** fuentes degradadas, sin datos nunca, orígenes huérfanos sin asociar y proveedores cuyo último descubrimiento falló.
+- **Fuentes que no reportan.** Por defecto solo las degradadas (más de 5 min sin métricas, regla de la API) y las que nunca reportaron; una casilla muestra también las sanas. Por señal: última recepción, recibidas en 5 min y errores de la última hora.
+- **Huérfanos.** Origen (clave y tipo), proveedor declarado, volumen acumulado por señal, última recepción y si ya es asociable o ya se asoció. Los asociados se ven atenuados.
+- **Descubrimiento.** La última pasada por proveedor con su resultado (texto y símbolo), duración y conteos; si falló, el error.
+
 ### Configuraciones (pantalla 5, como tabla)
 
 - Una fila por hallazgo: severidad, regla (nombre legible y detalle), activos, entornos comparados (como etiquetas) y cuándo se detectó. Hay filtros por severidad y entorno, y totales por severidad arriba.
@@ -175,6 +183,6 @@ Preguntas abiertas:
 | `GET /api/laboratorio/inyecciones` | Solo en el simulador |
 | Registros y trazas como evidencia | El wireframe los pide, pero la evidencia del contrato v1 solo trae métricas. La pantalla lo dice |
 | Tendencia de costos en el tiempo y activos subutilizados (pantalla 6) | No están en el contrato |
-| Pantallas 7 y 8 | Fuera de este encargo. La gestión de usuarios es el script de la sección 1 |
+| Pantalla 8 | Fuera de este encargo. La gestión de usuarios es el script de la sección 1. La 7 (fuentes) ya está (H-053) |
 | Modo oscuro | Sin decidir |
 | `scripts/instantanea-nodo.sh` en un nodo real | Se corrió en un equipo sin Docker: su JSON pasa `leer_instantanea` y las reglas. Falta correrlo en un nodo con contenedores y enviarlo a una plataforma desplegada |

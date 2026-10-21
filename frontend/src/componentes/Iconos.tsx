@@ -56,6 +56,16 @@ export function IconoCostos({ className }: P) {
   );
 }
 
+export function IconoFuentes({ className }: P) {
+  return (
+    <svg {...base} className={className}>
+      <circle cx="12" cy="18" r="2" />
+      <path d="M8.5 14.5a5 5 0 0 1 7 0M5.5 11.5a9 9 0 0 1 13 0M2.5 8.5a13 13 0 0 1 19 0" />
+      <circle cx="12" cy="18" r="0.9" fill="var(--amarillo)" stroke="none" />
+    </svg>
+  );
+}
+
 export function IconoUsuario({ className }: P) {
   return (
     <svg {...base} className={className} width={34} height={34}>
