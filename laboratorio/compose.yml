@@ -81,6 +81,9 @@ services:
       OTEL_LOGS_EXPORTER: ${EXPORTADOR_REGISTROS:-none}
       OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://agente:4317
+    # H-027: el inyector pone tc netem en este contenedor para degradar solo el
+    # enlace hacia catalogo. NET_ADMIN solo vale dentro de su propia red.
+    cap_add: [NET_ADMIN]
     ports:
       - "${IP_PEDIDOS:-127.0.0.1}:8000:8000"   # on-premise la cambia por variable
     healthcheck:

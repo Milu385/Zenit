@@ -33,12 +33,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
-from .fallas import Caida, Cpu, Disco, ErrorFalla, Falla, Memoria, contenedor_de, levantar, limpiar_relleno
+from .fallas import (Caida, Cpu, Disco, ErrorFalla, Falla, Latencia, Memoria, contenedor_de, levantar,
+                     limpiar_relleno, restaurar_enlaces)
 from .verdad import Registro, ahora, iso
 
 
 # ------------------------------------------------------------------ configuracion
-TIPOS_CAMPANA = ("cpu", "memoria", "disco_gradual", "disco_abrupto", "caida")
+TIPOS_CAMPANA = ("cpu", "memoria", "disco_gradual", "disco_abrupto", "caida", "latencia")
+# Sin CAMPANA_TIPOS, los de la epica 2: agregar latencia por defecto cambiaria el
+# calendario de una campana nueva con la misma semilla. Se pide explicita.
+TIPOS_POR_DEFECTO = ("cpu", "memoria", "disco_gradual", "disco_abrupto", "caida")
+# H-027: el enlace que degrada la latencia. Causa en el destino, se nota en el origen.
+ENLACE_LATENCIA = ("pedidos", "catalogo")
 GUARDADOS = ("semilla_efectiva", "calentamiento_h", "intervalo_min", "intervalo_max", "normal_min",
              "tipos", "servicios_caida")
 
@@ -59,7 +65,7 @@ class Config:
     intervalo_min: float = 60.0     # minutos entre el inicio de una inyeccion y el de la siguiente
     intervalo_max: float = 150.0
     normal_min: float = 45.0        # minutos de normalidad minimos entre el fin de una y la siguiente
-    tipos: tuple = TIPOS_CAMPANA
+    tipos: tuple = TIPOS_POR_DEFECTO
     semilla_efectiva: Optional[int] = None  # la de campana.json, si ya existe
 
     @classmethod
@@ -80,7 +86,7 @@ class Config:
                 intervalo_min=float(e.get("INTERVALO_MIN", "60")),
                 intervalo_max=float(e.get("INTERVALO_MAX", "150")),
                 normal_min=float(e.get("NORMAL_MIN", "45")),
-                tipos=tuple(t.strip() for t in e.get("CAMPANA_TIPOS", ",".join(TIPOS_CAMPANA)).split(",") if t.strip()),
+                tipos=tuple(t.strip() for t in e.get("CAMPANA_TIPOS", ",".join(TIPOS_POR_DEFECTO)).split(",") if t.strip()),
             )
         except ValueError as ex:
             raise ConfigInvalida(f"configuracion de la campana no valida: {ex}") from ex
@@ -141,6 +147,11 @@ def fabricar(spec: dict, cfg: Config, cliente_docker=None) -> Falla:
         servicio = spec["servicio"]
         return Caida(duracion_s=dur, servicio=servicio, proyecto=cfg.proyecto,
                      cliente=cliente_docker, parametros=base)
+    if tipo == "latencia":
+        origen, destino = spec.get("origen", ENLACE_LATENCIA[0]), spec.get("destino", ENLACE_LATENCIA[1])
+        return Latencia(duracion_s=dur, origen=origen, destino=destino, retardo_ms=spec["retardo_ms"],
+                        variacion_ms=spec.get("variacion_ms", 0), perdida=spec.get("perdida", 0),
+                        proyecto=cfg.proyecto, cliente=cliente_docker, parametros=base)
     raise ValueError(f"tipo de inyeccion desconocido: {tipo}")
 
 
@@ -156,6 +167,11 @@ def sortear(rng: random.Random, tipo: str, cfg: Config) -> dict:
         return {"tipo": tipo, "objetivo": round(rng.uniform(0.70, 0.85), 2), "duracion_s": rng.randint(5, 15) * 60}
     if tipo == "caida":
         return {"tipo": tipo, "servicio": rng.choice(list(cfg.servicios_caida)), "duracion_s": rng.randint(3, 10) * 60}
+    if tipo == "latencia":
+        retardo = rng.choice((150, 250, 400, 600, 800))
+        return {"tipo": tipo, "origen": ENLACE_LATENCIA[0], "destino": ENLACE_LATENCIA[1], "retardo_ms": retardo,
+                "variacion_ms": retardo // 5, "perdida": rng.choice((0, 0, 2, 5, 10)),
+                "duracion_s": rng.randint(5, 15) * 60}
     raise ValueError(f"tipo de inyeccion desconocido: {tipo}")
 
 
@@ -329,9 +345,16 @@ def recuperar(registro: Registro, cfg: Config, cliente_docker=None,
     n = limpiar_relleno(cfg.carpeta_relleno)
     if n:
         avisar(f"borrados {n} rellenos de disco")
-    asegurar_servicios(cfg, cliente_docker, avisar)
-    restaurado = ahora()
+    cliente_docker = asegurar_servicios(cfg, cliente_docker, avisar)
     abiertas = registro.abiertas()
+    if any(e.get("tipo") == "latencia" for e in abiertas):
+        # tc netem sobrevive al inyector: si se cayo a mitad, el enlace sigue lento
+        try:
+            for x in restaurar_enlaces(_cliente(cliente_docker), cfg.proyecto, ENLACE_LATENCIA):
+                avisar(f"quitada la latencia que quedo en {x}")
+        except Exception as e:
+            avisar(f"no se pudo revisar la latencia de {', '.join(ENLACE_LATENCIA)}: {e}")
+    restaurado = ahora()
     for e in abiertas:
         if e.get("tipo") in ("cpu", "memoria"):
             # el efecto murio con el contenedor: duro, como mucho, hasta el ultimo latido
@@ -339,7 +362,7 @@ def recuperar(registro: Registro, cfg: Config, cliente_docker=None,
             if latido.get("uid") == e["uid"]:
                 momento = datetime.fromisoformat(latido["momento"].replace("Z", "+00:00")) + timedelta(seconds=LATIDO_S)
         else:
-            momento = restaurado  # disco y caida duraron hasta que se restauraron recien
+            momento = restaurado  # disco, caida y latencia duraron hasta que se restauraron recien
         extra = {"efecto": "parcial", "fin_estimado": True, "efecto_fin": iso(momento or ahora())}
         registro.cerrar(e["uid"], "fallida", "interrumpida: el inyector se detuvo a mitad",
                         extra=extra, momento=momento)

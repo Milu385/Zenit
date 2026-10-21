@@ -6,6 +6,7 @@
     python -m inyector manual memoria --objetivo 0.75 --duracion 300
     python -m inyector manual disco --modo gradual --objetivo 0.8 --duracion 600
     python -m inyector manual caida --servicio catalogo --duracion 180
+    python -m inyector manual latencia --retardo 400 --variacion 80 --perdida 5 --duracion 600
     python -m inyector abiertas                    inyecciones sin cerrar
     python -m inyector recuperar                   cierra las abiertas y restaura el nodo
 """
@@ -32,12 +33,15 @@ def main(argv=None) -> int:
     sub.add_parser("abiertas")
     sub.add_parser("recuperar")
     m = sub.add_parser("manual")
-    m.add_argument("tipo", choices=["cpu", "memoria", "disco", "caida"])
+    m.add_argument("tipo", choices=["cpu", "memoria", "disco", "caida", "latencia"])
     m.add_argument("--duracion", type=int, default=300, help="segundos")
     m.add_argument("--carga", type=int, default=80, help="cpu: porcentaje por nucleo")
     m.add_argument("--objetivo", type=float, default=0.75, help="memoria y disco: fraccion ocupada al final")
     m.add_argument("--modo", choices=["gradual", "abrupto"], default="gradual", help="disco")
     m.add_argument("--servicio", default="catalogo", help="caida")
+    m.add_argument("--retardo", type=int, default=300, help="latencia: ms que se suman al enlace pedidos -> catalogo")
+    m.add_argument("--variacion", type=int, default=50, help="latencia: ms de variacion (distribucion normal)")
+    m.add_argument("--perdida", type=float, default=0.0, help="latencia: %% de paquetes perdidos")
     args = p.parse_args(argv)
 
     cfg = Config.desde_entorno()
@@ -66,7 +70,8 @@ def main(argv=None) -> int:
         return 0
 
     spec = {"tipo": args.tipo, "duracion_s": args.duracion, "carga": args.carga,
-            "objetivo": args.objetivo, "modo": args.modo, "servicio": args.servicio, "campana": "manual"}
+            "objetivo": args.objetivo, "modo": args.modo, "servicio": args.servicio, "campana": "manual",
+            "retardo_ms": args.retardo, "variacion_ms": args.variacion, "perdida": args.perdida}
     try:
         with candado_del_nodo(cfg.ruta_verdad, esperar=False):
             _, estado, _ = ejecutar(fabricar(spec, cfg), registro, parar, _avisar)
