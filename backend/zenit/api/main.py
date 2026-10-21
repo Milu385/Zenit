@@ -397,7 +397,8 @@ def crear_app(
         u = usuarios.obtener(datos.usuario)
         # se verifica aunque el usuario no exista, para que tarde lo mismo
         valida = claves.verificar(datos.clave, u.clave_hash if u else None)
-        if u is None or not valida:
+        # desactivado (H-044): igual que una clave mala, para no revelar que existe
+        if u is None or not u.activo or not valida:
             intentos.fallo(datos.usuario)
             # el mismo mensaje exista o no el usuario
             raise HTTPException(401, detail="usuario o clave incorrectos")

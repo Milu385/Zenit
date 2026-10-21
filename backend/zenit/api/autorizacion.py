@@ -75,9 +75,10 @@ def crear_autorizador(sesiones: Sesiones, usuarios: RepositorioUsuarios, token_n
         identidad: Optional[Identidad] = None
         sesion = sesiones.leer(token)
         if sesion:
-            # se relee el usuario: uno borrado o con otro rol no conserva lo que tenia
+            # se relee el usuario: uno borrado, desactivado o con otro rol no
+            # conserva lo que tenia
             u = usuarios.obtener(sesion.usuario)
-            if u:
+            if u and u.activo:
                 identidad = Identidad(u.usuario, u.rol, sesion.expira)
         if identidad is None:
             raise HTTPException(401, detail="inicia sesion para continuar", headers={"WWW-Authenticate": "Bearer"})
