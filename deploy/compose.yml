@@ -12,6 +12,7 @@ name: zenit-plataforma
 #   descubridor ──▶ APIs de los proveedores (solo lectura) ──▶ postgres
 #   agregador   ──▶ influxdb (crudo ▶ 1m ▶ 1h)
 #   detector    ──▶ influxdb (resumen 1m, via repositorio) ──▶ postgres (anomalias)
+#   diagnosticador ──▶ evidencia (influxdb, clickhouse) ──▶ modelo (redactada) ──▶ postgres (diagnosticos)
 #
 # Solo el borde publica puertos. El grupo de seguridad limita el 4317 a las IP
 # de los nodos (admitir-nodo.sh) y el 443 a las del equipo (abrir-interfaz.sh).
@@ -275,6 +276,27 @@ services:
       postgres-esquema:
         condition: service_completed_successfully
 
+  # Diagnostico (H-040), cada 10 s: hipotesis con evidencia citada para los
+  # incidentes nuevos de severidad media o alta. Solo sale hacia el proveedor
+  # del modelo la evidencia redactada (H-041).
+  diagnosticador:
+    image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "zenit.diagnostico", "--cada", "10"]
+    restart: unless-stopped
+    environment:
+      <<: [*influx, *pg, *ch]
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ZENIT_MODELO_DIAGNOSTICO: ${ZENIT_MODELO_DIAGNOSTICO:-}
+      ZENIT_DIAGNOSTICO_SEVERIDADES: ${ZENIT_DIAGNOSTICO_SEVERIDADES:-alta,media}
+    depends_on:
+      postgres-esquema:
+        condition: service_completed_successfully
+      clickhouse-esquema:
+        condition: service_completed_successfully
+
   api:
     image: ghcr.io/${ORG_GITHUB:?falta ORG_GITHUB}/zenit-api:${VERSION_API:-0.5.0}
     build:
@@ -289,6 +311,9 @@ services:
       ZENIT_SECRETO_SESION: ${ZENIT_SECRETO_SESION:?falta ZENIT_SECRETO_SESION; openssl rand -hex 32}
       # con el que los nodos envian su instantanea de configuracion
       TOKEN_INSTANTANEAS: ${TOKEN_INSTANTANEAS:?falta TOKEN_INSTANTANEAS; openssl rand -hex 32}
+      # diagnostico a pedido (H-040); sin ellas la ruta responde 503
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ZENIT_MODELO_DIAGNOSTICO: ${ZENIT_MODELO_DIAGNOSTICO:-}
     volumes:
       - ./catalogo:/etc/zenit/catalogo:ro
       - ./gobernanza:/etc/zenit/gobernanza:ro

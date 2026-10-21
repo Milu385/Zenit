@@ -119,6 +119,7 @@ def crear_app(
     politica: Optional[configuraciones.Politica] = None,
     facturas: Optional[costos.RepositorioCostos] = None,
     token_nodos: str = "",
+    cliente_modelo=None,
 ) -> FastAPI:
     usuarios = usuarios if usuarios is not None else UsuariosMemoria()
     if secreto_sesion is None:
@@ -335,6 +336,33 @@ def crear_app(
         if fila is None:
             raise HTTPException(404, detail=f"no existe el incidente {id_incidente}")
         return _serializar(recuperar(fila, repositorio, analitico))
+
+    @app.post("/api/incidentes/{id_incidente}/diagnostico", tags=["incidentes"])
+    @requiere("incidentes:gestionar")
+    def pedir_diagnostico(id_incidente: int):
+        """Genera o regenera la hipotesis del incidente, en el momento (H-040).
+
+        Responde 200 con el diagnostico. Si el proveedor del modelo falla, 502,
+        y el incidente y su evidencia quedan como estaban (P-DIA-05). Sin
+        configuracion del modelo o sin la redaccion de H-041, 503: no se envia
+        nada sin redactar."""
+        from zenit.diagnostico.hipotesis import SinRedaccion, diagnosticar
+        from zenit.diagnostico.modelo import ErrorModelo, SinConfiguracion
+
+        if not pg_url:
+            raise HTTPException(404, detail=f"no existe el incidente {id_incidente}")
+        if cliente_modelo is None:
+            raise HTTPException(503, detail="el diagnostico no esta configurado "
+                                            "(ZENIT_MODELO_DIAGNOSTICO y ANTHROPIC_API_KEY)")
+        try:
+            d = _pg(lambda c: diagnosticar(c, id_incidente, repositorio, analitico, cliente_modelo))
+        except (SinConfiguracion, SinRedaccion) as e:
+            raise HTTPException(503, detail=str(e))
+        except ErrorModelo as e:
+            raise HTTPException(502, detail=f"no se pudo generar el diagnostico: {e}")
+        if d is None:
+            raise HTTPException(404, detail=f"no existe el incidente {id_incidente}")
+        return d
 
     @app.post("/api/incidentes/{id_incidente}/estado", tags=["incidentes"])
     @requiere("incidentes:gestionar")
@@ -597,7 +625,20 @@ def _desde_entorno() -> FastAPI:
         politica=configuraciones.Politica.desde_archivo(Path(ruta_politica)),
         facturas=CostosPg(pg) if pg else None,
         token_nodos=os.environ.get("TOKEN_INSTANTANEAS", ""),
+        cliente_modelo=_modelo_desde_entorno(),
     )
+
+
+def _modelo_desde_entorno():
+    """El cliente del modelo si esta configurado; si no, None y la ruta de
+    diagnostico responde 503 diciendo que falta."""
+    from zenit.diagnostico.modelo import ClienteAnthropic, SinConfiguracion
+
+    try:
+        return ClienteAnthropic.desde_entorno()
+    except SinConfiguracion as e:
+        log.warning("diagnostico sin configurar: %s", e)
+        return None
 
 
 def _analitico_desde_entorno():

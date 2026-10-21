@@ -24,7 +24,8 @@ TERMINAL = object()   # respuesta de `marcar` cuando el incidente ya no admite c
 LIMITE = 500
 
 _COLUMNAS = ("id", "activo", "metrica", "dimensiones", "inicio", "fin", "estado",
-             "severidad", "puntaje", "evidencia", "version_modelo", "marcada_por", "marcada_en")
+             "severidad", "puntaje", "evidencia", "version_modelo", "marcada_por", "marcada_en",
+             "detectada_en")
 
 # alta primero; una severidad desconocida va al final en vez de romper el orden
 _ORDEN = ("ORDER BY CASE a.severidad WHEN 'alta' THEN 0 WHEN 'media' THEN 1 "
