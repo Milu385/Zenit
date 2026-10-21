@@ -273,7 +273,31 @@ def test_catalogo_cubre_los_tipos_de_falla_del_laboratorio():
 ACTIVO = "activo-azure-nodo-01"
 
 
+TERMINALES = ("cerrada", "falso_positivo")
+
+
+def _fila(**cambios):
+    """Una fila de `anomalias` con los valores que usan las pruebas."""
+    f = {"id": 7, "activo": ACTIVO, "metrica": "system_memory_utilization",
+         "dimensiones": {"state": "used"}, "inicio": INICIO, "estado": "detectada",
+         "fin": None, "evidencia": {"clase": "medida", "linea_base": dict(LINEA_BASE)}}
+    f.update(cambios)
+    return f
+
+
+def _desenvolver(valor):
+    """Los jsonb van envueltos en psycopg.types.json.Jsonb."""
+    return getattr(valor, "obj", valor)
+
+
 class _FalsoCursor:
+    """Responde las tres consultas que el detector hace sobre `anomalias`
+    evaluandolas contra las filas de la conexion falsa, en vez de devolver una
+    respuesta fija. Asi las pruebas del ciclo ejercitan de verdad la
+    deduplicacion y el cierre."""
+
+    COLUMNAS = ("id", "activo", "metrica", "dimensiones", "inicio", "estado", "evidencia")
+
     def __init__(self, conexion):
         self.conexion = conexion
         self.rowcount = 0
@@ -285,36 +309,68 @@ class _FalsoCursor:
     def __exit__(self, *a):
         return False
 
+    @staticmethod
+    def _en_curso(f):
+        return f["fin"] is None and f["estado"] not in TERMINALES
+
     def execute(self, sql, params=None):
-        limpio = sql.lstrip()
-        if limpio.startswith("INSERT"):
+        limpio = " ".join(sql.split())
+        if limpio.startswith("INSERT INTO anomalias"):
+            activo, metrica, dimensiones, inicio, severidad_, puntaje, evidencia, version = params
             self.conexion.inserts.append(params)
-        elif limpio.startswith("UPDATE"):
-            self.conexion.cerradas.append(params)
-            self.rowcount = 1
-        elif limpio.startswith("SELECT id,"):      # cierre.abiertas
-            self._filas = list(self.conexion.filas_abiertas)
+            self.conexion.insertar(_fila(
+                activo=activo, metrica=metrica, dimensiones=_desenvolver(dimensiones),
+                inicio=inicio, estado="detectada", evidencia=_desenvolver(evidencia)))
+        elif limpio.startswith("UPDATE anomalias"):
+            fin, anomalia_id = params
+            for f in self.conexion.filas:
+                if f["id"] == anomalia_id and self._en_curso(f):
+                    f["fin"], f["estado"] = fin, "cerrada"
+                    self.rowcount = 1
+                    self.conexion.cerradas.append(params)
+        elif limpio.startswith("SELECT 1 FROM anomalias"):
+            activo, metrica, dimensiones, inicio = params
+            dimensiones = _desenvolver(dimensiones)
+            self._filas = [(1,)] if any(
+                (f["activo"], f["metrica"], f["dimensiones"]) == (activo, metrica, dimensiones)
+                and (self._en_curso(f) or f["inicio"] == inicio)
+                for f in self.conexion.filas
+            ) else []
+        elif limpio.startswith("SELECT id,"):          # cierre.abiertas
+            self._filas = [tuple(f[c] for c in self.COLUMNAS)
+                           for f in sorted(self.conexion.filas, key=lambda f: f["inicio"])
+                           if self._en_curso(f)]
 
     def fetchall(self):
         return self._filas
 
     def fetchone(self):
-        return (1,) if self.conexion.hay_abierta else None
+        return self._filas[0] if self._filas else None
 
 
 class _FalsaConexion:
-    def __init__(self, hay_abierta=False, filas_abiertas=()):
+    def __init__(self, filas=()):
+        self.filas = [dict(f) for f in filas]
+        self._ultimo_id = max([f["id"] or 0 for f in self.filas] + [0])
         self.inserts: list = []
         self.cerradas: list = []
-        self.filas_abiertas = list(filas_abiertas)
-        self.hay_abierta = hay_abierta
         self.commits = 0
+
+    def insertar(self, fila):
+        self._ultimo_id += 1
+        fila["id"] = self._ultimo_id
+        self.filas.append(fila)
 
     def cursor(self):
         return _FalsoCursor(self)
 
     def commit(self):
         self.commits += 1
+
+    def marcar_falso_positivo(self):
+        """Lo que hace el operador desde la API (RF-DET-06)."""
+        for f in self.filas:
+            f["estado"] = "falso_positivo"
 
 
 class _FalsoRepositorio:
@@ -346,11 +402,6 @@ def _conectado(monkeypatch, conexion, activos=(ACTIVO,)):
                         lambda url, autocommit=False: contextlib.nullcontext(conexion))
     monkeypatch.setattr(catalogo, "listar_activos",
                         lambda c, incluir_retirados=True: [{"id": a} for a in activos])
-
-
-def _desenvolver(valor):
-    """Los jsonb van envueltos en psycopg.types.json.Jsonb."""
-    return getattr(valor, "obj", valor)
 
 
 def test_ciclo_solo_consulta_las_metricas_que_existen(monkeypatch):
@@ -407,7 +458,7 @@ def test_ciclo_no_duplica_una_anomalia_ya_abierta(monkeypatch):
     """Mientras siga abierta no se abre otra: cerrarla es trabajo de H-033."""
     from zenit.deteccion.detector import Detector
 
-    conexion = _FalsaConexion(hay_abierta=True)
+    conexion = _FalsaConexion(filas=[_fila()])
     _conectado(monkeypatch, conexion)
     repo = _FalsoRepositorio(["system_memory_utilization"], saturada="system_memory_utilization")
 
@@ -567,21 +618,10 @@ def test_el_tiempo_de_cierre_cabe_en_el_hueco_de_la_campana():
 
 
 # ------------------------------------------------- H-033: cierre en el ciclo
-def _fila_abierta(**cambios):
-    """Una fila de `anomalias` sin cerrar, en el orden de columnas que lee
-    cierre.abiertas: asi la prueba ejercita ese parseo de verdad."""
-    datos = {"id": 7, "activo": ACTIVO, "metrica": "system_memory_utilization",
-             "dimensiones": {"state": "used"}, "inicio": INICIO, "estado": "detectada",
-             "evidencia": {"clase": "medida", "linea_base": dict(LINEA_BASE)}}
-    datos.update(cambios)
-    return tuple(datos[c] for c in ("id", "activo", "metrica", "dimensiones",
-                                    "inicio", "estado", "evidencia"))
-
-
 def test_ciclo_cierra_la_anomalia_que_volvio_a_normal(monkeypatch):
     from zenit.deteccion.detector import Detector
 
-    conexion = _FalsaConexion(filas_abiertas=[_fila_abierta()])
+    conexion = _FalsaConexion(filas=[_fila()])
     _conectado(monkeypatch, conexion)
     repo = _FalsoRepositorio(["system_memory_utilization"])     # serie plana: normal
 
@@ -596,7 +636,7 @@ def test_ciclo_no_cierra_si_la_fuente_esta_degradada(monkeypatch):
     from zenit import salud
     from zenit.deteccion.detector import Detector
 
-    conexion = _FalsaConexion(filas_abiertas=[_fila_abierta()])
+    conexion = _FalsaConexion(filas=[_fila()])
     _conectado(monkeypatch, conexion)
     callada = INICIO - salud.DEGRADADA_TRAS - timedelta(minutes=1)
     monkeypatch.setattr(salud, "fuentes_pg", lambda c: [
@@ -615,7 +655,7 @@ def test_ciclo_no_cierra_una_anomalia_sin_linea_base(monkeypatch):
     avisa, en vez de recalcular una ventana que mentiria."""
     from zenit.deteccion.detector import Detector
 
-    conexion = _FalsaConexion(filas_abiertas=[_fila_abierta(evidencia={"clase": "medida"})])
+    conexion = _FalsaConexion(filas=[_fila(evidencia={"clase": "medida"})])
     _conectado(monkeypatch, conexion)
     repo = _FalsoRepositorio(["system_memory_utilization"])
 
@@ -632,3 +672,48 @@ def test_un_hueco_de_datos_no_cuenta_como_normalidad():
     # los mismos 15 puntos normales, pero los ultimos 5 llegan media hora despues
     con_hueco = seguidos[:15] + [(t + timedelta(minutes=30), v) for t, v in seguidos[15:]]
     assert momento_de_cierre(con_hueco, 10.0, 0.5, normalidad=15) is None
+
+
+# ------------------------------------------- H-033: la marca del operador
+def test_un_falso_positivo_no_se_reabre_en_el_ciclo_siguiente(monkeypatch):
+    """La marca del operador (RF-DET-06) tiene que sobrevivir aunque la serie
+    siga fuera de rango: el ciclo siguiente ve la misma racha y calcula el
+    mismo inicio, asi que seria la misma anomalia otra vez."""
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    repo = _FalsoRepositorio(["system_memory_utilization"], saturada="system_memory_utilization")
+    detector = Detector(repo, "postgresql://doble")
+
+    assert detector.ciclo(ahora=INICIO)["anomalias_abiertas"] == 1
+    assert len(conexion.filas) == 1
+    inicio_original = conexion.filas[0]["inicio"]
+
+    conexion.marcar_falso_positivo()
+
+    # la serie sigue igual de saturada: el detector vuelve a ver la misma racha
+    resumen = detector.ciclo(ahora=INICIO)
+
+    assert resumen["anomalias_abiertas"] == 0
+    assert len(conexion.filas) == 1, "se reabrio la anomalia que el operador descarto"
+    assert conexion.filas[0]["estado"] == "falso_positivo"
+    assert conexion.filas[0]["inicio"] == inicio_original
+
+
+def test_una_anomalia_con_otro_inicio_si_entra_pese_al_falso_positivo(monkeypatch):
+    """El guardia es por serie e inicio, no por serie: una degradacion nueva
+    arranca en otro instante y tiene que poder abrirse, o un solo falso
+    positivo dejaria esa serie ciega para siempre."""
+    from zenit.deteccion.detector import Detector
+
+    vieja = _fila(estado="falso_positivo", inicio=INICIO - timedelta(days=1))
+    conexion = _FalsaConexion(filas=[vieja])
+    _conectado(monkeypatch, conexion)
+    repo = _FalsoRepositorio(["system_memory_utilization"], saturada="system_memory_utilization")
+
+    resumen = Detector(repo, "postgresql://doble").ciclo(ahora=INICIO)
+
+    assert resumen["anomalias_abiertas"] == 1
+    assert len(conexion.filas) == 2
+    assert {f["estado"] for f in conexion.filas} == {"falso_positivo", "detectada"}

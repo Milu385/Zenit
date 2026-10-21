@@ -535,8 +535,9 @@ class Detector:
             senal, respuesta, ventana=self.ventana, persistencia=self.persistencia,
             z_normal=self.z_normal, z_critico=self.z_critico,
         ):
-            if self._ya_abierta(conexion, activo, senal.metrica, hallazgo.dimensiones):
-                continue    # ya hay una anomalia abierta: seguir o cerrar es H-033
+            if self._ya_registrada(conexion, activo, senal.metrica, hallazgo.dimensiones,
+                                   hallazgo.evento.momento):
+                continue    # ya esta representada: en curso, o ya marcada con este mismo inicio
             self._abrir(conexion, activo, senal.metrica, hallazgo)
             abiertas += 1
         return abiertas
@@ -598,18 +599,35 @@ class Detector:
         return {"filas": informe, "sin_vigilar": sin_vigilar}
 
     # -------------------------------------------------------------- postgres
-    def _ya_abierta(self, conexion, activo: str, metrica: str, dimensiones: dict) -> bool:
-        """Si esa serie ya tiene una anomalia en curso no se abre otra.
+    def _ya_registrada(self, conexion, activo: str, metrica: str, dimensiones: dict,
+                       inicio: datetime) -> bool:
+        """Si esta serie ya tiene esta anomalia, no se abre otra. Dos motivos
+        distintos, y hacen falta los dos:
 
-        Se excluyen los estados terminales por la misma razon que en el
-        cierre: una anomalia que el operador marco como falso positivo sin
-        ponerle `fin` no debe bloquear para siempre la deteccion de su serie.
+        **Hay una en curso.** Mientras siga abierta y sin marcar, la
+        degradacion ya esta representada; seguir abierta o cerrarla es trabajo
+        de H-033. Se excluyen los estados terminales para que una anomalia
+        marcada por el operador sin `fin` no bloquee su serie para siempre.
+
+        **Ya existe una con este mismo inicio, en cualquier estado.** Sin esto,
+        la exclusion anterior se vuelve contra si misma: en cuanto el operador
+        marca un falso positivo, el ciclo siguiente vuelve a ver la misma racha
+        de puntos, calcula el mismo instante de apertura y la inserta de nuevo,
+        deshaciendo la marca. Una anomalia esta identificada por su serie y su
+        inicio, asi que repetir ese par es repetir la misma anomalia, y la
+        marca del operador tiene que sobrevivir. Una degradacion realmente
+        nueva en la misma serie arranca en otro instante y si entra.
+
+        Limitacion conocida: si la desviacion se sostiene tanto que la racha
+        original sale de la ventana, el detector puede calcular un inicio
+        distinto para la misma causa y abrir otra anomalia pese a la marca.
+        Con la ventana de 60 minutos eso tarda al menos una hora.
         """
         with conexion.cursor() as cur:
             cur.execute(
-                "SELECT 1 FROM anomalias WHERE activo = %s AND metrica = %s "
-                f"AND dimensiones = %s AND fin IS NULL AND estado NOT IN {cierre.EN_TERMINALES} LIMIT 1",
-                (activo, metrica, _jsonb(dimensiones)),
+                "SELECT 1 FROM anomalias WHERE activo = %s AND metrica = %s AND dimensiones = %s "
+                f"AND ((fin IS NULL AND estado NOT IN {cierre.EN_TERMINALES}) OR inicio = %s) LIMIT 1",
+                (activo, metrica, _jsonb(dimensiones), inicio),
             )
             return cur.fetchone() is not None
 
