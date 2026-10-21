@@ -112,6 +112,10 @@ Desde la pantalla de costos, con un rol que tenga `costos:importar`. Otra opció
 - **La evidencia es una lista numerada.** Primero va la que cita la hipótesis (`evidencia_citada`, con su observación). Después, la métrica que se desvió y las `metricas_relacionadas` del detector en la ventana de la anomalía. Al elegir una, se dibuja su serie con 10 min de margen a cada lado.
 - **Pedir o regenerar la hipótesis.** El botón se muestra a quien tiene `incidentes:gestionar`. Con 200 se muestra el diagnóstico al momento. Con 202 la página dice "en cola" y vuelve a pedir el incidente cada 15 s hasta que llegue.
 - **Sin "confianza".** El primer borrador la mostraba, pero el contrato no la trae.
+- **Cada cita lleva a su evidencia (H-051).** Debajo de la hipótesis se listan las citas con su métrica e intervalo; al pulsar una se dibuja esa serie. Si una cita no trae un intervalo legible se usa la ventana del detector y se dice.
+- **Versión del modelo sin protagonismo.** La del detector (`version_modelo`) va en letra pequeña junto al método; la del diagnóstico, al pie de la hipótesis.
+- **Quién marcó.** Si el incidente se confirmó o descartó, la cabecera dice quién y cuándo (`marcada_por`, `marcada_en`).
+- **Sin servicio de diagnóstico.** Mientras no exista `POST /diagnostico` (H-040), pedir una hipótesis dice que el servicio no está disponible y la evidencia se ve igual.
 
 ### Detalle del activo (pantalla 2)
 

@@ -7,7 +7,7 @@ import SegunCarga from "../componentes/SegunCarga";
 import VistaSerie from "../componentes/VistaSerie";
 import type { DetalleIncidente as Detalle, PeticionEstado } from "../contrato";
 import { Enlace } from "../enrutador";
-import { ABIERTO, duracion, fechaHora, hace, nombreMetrica, tituloIncidente } from "../formato";
+import { ABIERTO, duracion, fechaHora, fechaValida, hace, nombreMetrica, tituloIncidente } from "../formato";
 import { useSesion } from "../sesion";
 import { useCarga } from "../useCarga";
 
@@ -20,18 +20,31 @@ const MARGEN_MS = 10 * 60_000;
 const REVISAR_COLA_MS = 15_000;
 
 // Un elemento de la lista de evidencia: una metrica del activo en una ventana.
-type Pieza = { clave: string; metrica: string; desde: string; hasta: string; origen: string; observacion?: string };
+// `aproximada`: la cita no trae un intervalo legible y se usa la ventana del detector.
+type Pieza = {
+  clave: string;
+  metrica: string;
+  desde: string;
+  hasta: string;
+  origen: string;
+  observacion?: string;
+  aproximada?: boolean;
+};
 
 function piezas(d: Detalle): Pieza[] {
-  const citadas: Pieza[] = (d.diagnostico?.evidencia_citada ?? []).map((e, i) => ({
-    clave: `citada-${i}`,
-    metrica: e.metrica,
-    desde: e.desde,
-    hasta: e.hasta,
-    origen: "Citada por la hipotesis",
-    observacion: e.observacion,
-  }));
   const { desde, hasta } = d.evidencia.ventana;
+  const citadas: Pieza[] = (d.diagnostico?.evidencia_citada ?? []).map((e, i) => {
+    const legible = fechaValida(e.desde) && fechaValida(e.hasta);
+    return {
+      clave: `citada-${i}`,
+      metrica: e.metrica,
+      desde: legible ? e.desde : desde,
+      hasta: legible ? e.hasta : hasta,
+      origen: "Citada por la hipotesis",
+      observacion: e.observacion,
+      aproximada: !legible,
+    };
+  });
   const detector: Pieza[] = [d.metrica, ...d.evidencia.metricas_relacionadas]
     .filter((m, i, todas) => todas.indexOf(m) === i)
     .map((m) => ({
@@ -52,7 +65,7 @@ function VistaPieza({ activo, p }: { activo: string; p: Pieza }) {
   return <VistaSerie activo={activo} metrica={p.metrica} ventana={ventana} titulo={`${nombreMetrica(p.metrica)} en ${activo}`} />;
 }
 
-const numeroCorto = (v: number) => v.toLocaleString("es-CO", { maximumFractionDigits: 3 });
+const numeroCorto = (v: number | null) => (v == null ? "sin dato" : v.toLocaleString("es-CO", { maximumFractionDigits: 3 }));
 
 function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => void }) {
   const { puede } = useSesion();
@@ -88,10 +101,14 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
     setMarcando(estado);
     setError(null);
     try {
-      await api.cambiarEstado(d.id, estado);
-      actualizar({ ...d, estado });
+      const r = await api.cambiarEstado(d.id, estado);
+      actualizar({ ...d, estado: r.estado, fin: r.fin, marcada_por: r.marcada_por, marcada_en: r.marcada_en });
     } catch (e) {
-      setError(`No se pudo marcar: ${e instanceof Error ? e.message : e}`);
+      setError(
+        e instanceof ErrorApi && e.estado === 409
+          ? "Este incidente ya estaba cerrado o descartado. Recarga la pagina para ver su estado actual."
+          : `No se pudo marcar: ${e instanceof Error ? e.message : e}`,
+      );
     } finally {
       setMarcando(null);
     }
@@ -108,7 +125,9 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
       setError(
         e instanceof ErrorApi && e.estado === 403
           ? "Tu rol no puede pedir diagnosticos."
-          : `No se pudo pedir la hipotesis: ${e instanceof Error ? e.message : e}`,
+          : e instanceof ErrorApi && (e.estado === 404 || e.estado === 405)
+            ? "El servicio de diagnostico todavia no esta disponible. La evidencia de abajo no depende de el."
+            : `No se pudo pedir la hipotesis: ${e instanceof Error ? e.message : e}`,
       );
     } finally {
       setPidiendo(false);
@@ -139,6 +158,11 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
             · dura {duracion(d.inicio, d.fin)}
             {d.fin ? "" : " y sigue"} · puntaje {numeroCorto(d.puntaje)}
           </p>
+          {d.marcada_por && d.marcada_en && (
+            <p className="meta">
+              {d.estado === "falso_positivo" ? "Descartado" : "Marcado"} por {d.marcada_por} {hace(d.marcada_en)}
+            </p>
+          )}
         </div>
         {gestiona && ABIERTO.includes(d.estado) && (
           <div className="acciones">
@@ -181,7 +205,10 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
             </dd>
           </div>
         </dl>
-        <p className="meta">Metodo del detector: {ev.metodo}</p>
+        <p className="meta">
+          Metodo del detector: {ev.metodo}
+          {d.version_modelo && d.version_modelo !== ev.metodo ? ` · version ${d.version_modelo}` : ""}
+        </p>
       </section>
 
       <div className="rejilla-incidente">
@@ -196,9 +223,22 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
                 Es una posible explicacion generada por un modelo, no una conclusion. Revisa la evidencia antes de actuar.
               </p>
               {citadas > 0 && (
-                <button type="button" className="boton-texto ir-evidencia" onClick={() => elegir(lista[0].clave)}>
-                  Se apoya en {citadas} {citadas === 1 ? "evidencia" : "evidencias"} →
-                </button>
+                <>
+                  <p className="ir-evidencia">
+                    Se apoya en {citadas} {citadas === 1 ? "evidencia" : "evidencias"}:
+                  </p>
+                  <ol className="citas">
+                    {lista
+                      .filter((p) => p.clave.startsWith("citada-"))
+                      .map((p, i) => (
+                        <li key={p.clave}>
+                          <button type="button" className="boton-texto" onClick={() => elegir(p.clave)}>
+                            {i + 1}. {nombreMetrica(p.metrica)}, {fechaHora(p.desde)} a {fechaHora(p.hasta)} →
+                          </button>
+                        </li>
+                      ))}
+                  </ol>
+                </>
               )}
               <p className="hipotesis-pie">
                 {d.diagnostico.modelo} · {hace(d.diagnostico.generado)}
@@ -237,6 +277,7 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
                     <span className="tipo">{p.origen}</span>
                     <span className="descripcion">
                       {nombreMetrica(p.metrica)}, {fechaHora(p.desde)} a {fechaHora(p.hasta)}
+                      {p.aproximada ? " (la cita no trae intervalo; ventana del detector)" : ""}
                     </span>
                     {p.observacion && <span className="descripcion observacion">{p.observacion}</span>}
                   </span>

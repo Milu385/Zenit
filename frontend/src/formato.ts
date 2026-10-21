@@ -56,8 +56,13 @@ export function duracion(desde: string, hasta: string | null, ahora = Date.now()
   return m ? `${h} h ${m} min` : `${h} h`;
 }
 
+export const fechaValida = (iso: string) => !Number.isNaN(new Date(iso).getTime());
+
+// Un texto que no es fecha se muestra tal cual en vez de "Invalid Date".
 export const fechaHora = (iso: string) =>
-  new Date(iso).toLocaleString("es-CO", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  fechaValida(iso)
+    ? new Date(iso).toLocaleString("es-CO", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+    : iso;
 
 export const porcentaje = (v: number | null) => (v == null ? "sin dato" : `${Math.round(v * 100)} %`);
 

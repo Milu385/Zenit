@@ -449,7 +449,15 @@ export function detalle(id: number): DetalleIncidente | null {
   if (!b) return null;
   const { tiene_diagnostico: _t, ...i } = resumen(b);
   const { inicio, fin } = ventanaDe(b);
-  return { ...i, evidencia: b.evidencia(inicio, fin), diagnostico: diagnosticoDe(b) };
+  const marca = marcas.get(id);
+  return {
+    ...i,
+    evidencia: b.evidencia(inicio, fin),
+    diagnostico: diagnosticoDe(b),
+    version_modelo: "mad-v1 W=60 z=3.5 m=3",
+    marcada_por: marca?.marcada_por ?? null,
+    marcada_en: marca?.marcada_en ?? null,
+  };
 }
 
 // ---------------------------------------------------------------- activos
