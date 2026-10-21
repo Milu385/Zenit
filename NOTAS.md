@@ -117,6 +117,7 @@ Desde la pantalla de costos, con un rol que tenga `costos:importar`. Otra opció
 
 - Usa `GET /api/activos/{id}` (con `claves`). Un 404 se muestra como "no hay un activo así", no como error.
 - Los incidentes se piden con `?activo=`. El costo atribuido solo aparece si el rol tiene `costos:ver`, y usa el periodo por defecto de la API.
+- **Registros y trazas recientes (H-049).** Solo con `registros:ver`. Ventana de 15 min, 1 h (por defecto), 6 h o 24 h. Los registros se filtran por nivel y por texto, y muestran los 200 más recientes; los que vienen de una traza tienen "Ver su traza". Las trazas se resumen por traza (operación raíz, duración, spans, errores, servicios) y al elegir una se ven sus spans en árbol, con los de otro activo marcados. Si ClickHouse no responde (503), la sección lo dice y el resto de la ficha sigue.
 
 ### Fuentes (pantalla 7, H-053)
 

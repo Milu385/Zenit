@@ -2,6 +2,7 @@ import { api, ErrorApi } from "../api";
 import { SinDatos } from "../componentes/Estados";
 import { InsigniaIncidente, InsigniaSeveridad } from "../componentes/Insignias";
 import Marco from "../componentes/Marco";
+import RegistrosYTrazas from "../componentes/RegistrosYTrazas";
 import SegunCarga from "../componentes/SegunCarga";
 import VistaSerie from "../componentes/VistaSerie";
 import type { DetalleActivo as Detalle } from "../contrato";
@@ -11,7 +12,8 @@ import { useSesion } from "../sesion";
 import { useCarga } from "../useCarga";
 
 // Pantalla 2. Ficha del activo, sus incidentes abiertos, su costo si el rol lo
-// ve, y la vista de serie de H-007 reutilizada con el activo fijo.
+// ve, la vista de serie de H-007 reutilizada con el activo fijo, y sus
+// registros y trazas recientes si el rol tiene registros:ver (H-049).
 
 function IncidentesDelActivo({ activo }: { activo: string }) {
   const r = useCarga((s) => api.incidentes({ activo }, s), [activo]);
@@ -99,6 +101,7 @@ function Ficha({ a }: { a: Detalle }) {
         <h3>Senales</h3>
         <VistaSerie activo={a.id} />
       </section>
+      {puede("registros:ver") && <RegistrosYTrazas activo={a.id} />}
     </>
   );
 }

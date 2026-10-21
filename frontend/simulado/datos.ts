@@ -15,7 +15,10 @@ import type {
   Inyeccion,
   ReporteCostos,
   RespuestaSerie,
+  Registro,
+  ResumenTraza,
   Rol,
+  Span,
 } from "../src/contrato";
 
 const MIN = 60_000;
@@ -151,6 +154,88 @@ const BASE: Base[] = [
     retirado: true,
   },
 ];
+
+// --------------------------------------------------------- registros y trazas
+
+// Una traza cada 2 min por activo, pedidos -> catalogo; una de cada cinco con
+// error en catalogo. Determinista para que la pagina no cambie en cada refresco.
+const PASO_TRAZA = 2 * MIN;
+const hex = (n: number, largo: number) => (n.toString(16).padStart(largo, "0") + "0".repeat(largo)).slice(0, largo);
+const idTraza = (activo: string, t: number) => hex(Math.abs([...activo].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7)), 8) + hex(t / PASO_TRAZA, 24);
+const conError = (t: number) => (t / PASO_TRAZA) % 5 === 0;
+
+function momentosTraza(desde: Date, hasta: Date): number[] {
+  const salida: number[] = [];
+  for (let t = Math.floor(hasta.getTime() / PASO_TRAZA) * PASO_TRAZA; t >= desde.getTime() && salida.length < 720; t -= PASO_TRAZA) salida.push(t);
+  return salida;
+}
+
+function spansDe(activo: string, t: number): Span[] {
+  const mal = conError(t);
+  const base = { zenit_asset_id: activo, host_name: activo.replace("activo-", ""), atributos: {}, estado_mensaje: "" };
+  const span = (i: number, padre: string, nombre: string, servicio: string, desdeMs: number, durMs: number, error = false): Span => ({
+    ...base,
+    span_id: hex(i + 1, 16),
+    padre_id: padre,
+    nombre,
+    tipo: padre ? "client" : "server",
+    service_name: servicio,
+    inicio: new Date(t + desdeMs).toISOString(),
+    fin: new Date(t + desdeMs + durMs).toISOString(),
+    duracion_ns: durMs * 1e6,
+    estado: error ? "error" : "ok",
+    estado_mensaje: error ? "timeout al consultar el inventario" : "",
+  });
+  return [
+    span(0, "", "POST /pedidos", "pedidos", 0, mal ? 2_140 : 184),
+    span(1, hex(1, 16), "GET /catalogo/productos", "pedidos", 12, mal ? 2_100 : 95, mal),
+    span(2, hex(2, 16), "SELECT productos", "catalogo", 20, mal ? 2_060 : 61, mal),
+    span(3, hex(1, 16), "INSERT pedido", "pedidos", mal ? 2_120 : 120, 14),
+  ];
+}
+
+export function trazasDe(activo: string, desde: Date, hasta: Date, soloErrores: boolean): ResumenTraza[] {
+  return momentosTraza(desde, hasta)
+    .filter((t) => !soloErrores || conError(t))
+    .slice(0, 100)
+    .map((t) => {
+      const spans = spansDe(activo, t);
+      return {
+        traza_id: idTraza(activo, t),
+        inicio: spans[0].inicio,
+        fin: spans.map((s) => s.fin).sort().pop()!,
+        duracion_ns: spans[0].duracion_ns,
+        spans: spans.length,
+        errores: spans.filter((s) => s.estado === "error").length,
+        raiz: spans[0].nombre,
+        servicios: ["catalogo", "pedidos"],
+      };
+    });
+}
+
+export function traza(id: string): Span[] {
+  for (const b of BASE)
+    for (const t of momentosTraza(new Date(Date.now() - 24 * 60 * MIN), new Date())) if (idTraza(b.id, t) === id) return spansDe(b.id, t);
+  return [];
+}
+
+export function registrosDe(activo: string, desde: Date, hasta: Date, severidadMinima: number, texto: string | null): Registro[] {
+  const salida: Registro[] = [];
+  for (const t of momentosTraza(desde, hasta)) {
+    const mal = conError(t);
+    const id = idTraza(activo, t);
+    const comun = { host_name: activo.replace("activo-", ""), atributos: {} };
+    salida.push({ ...comun, momento: new Date(t + 190).toISOString(), service_name: "pedidos", severidad: "INFO", severidad_num: 9, cuerpo: `pedido creado en ${mal ? 2140 : 184} ms`, traza_id: id, span_id: hex(1, 16) });
+    if (mal)
+      salida.push({ ...comun, momento: new Date(t + 2_105).toISOString(), service_name: "catalogo", severidad: "ERROR", severidad_num: 17, cuerpo: "consulta de productos supero 2 s: timeout\n  en catalogo/consultas.py:88", traza_id: id, span_id: hex(3, 16) });
+    if ((t / PASO_TRAZA) % 7 === 0)
+      salida.push({ ...comun, momento: new Date(t + 30_000).toISOString(), service_name: "", severidad: "WARN", severidad_num: 13, cuerpo: "systemd: disco /var al 81 % <b>no es html</b>", traza_id: "", span_id: "" });
+  }
+  return salida
+    .filter((r) => r.severidad_num >= severidadMinima && (!texto || r.cuerpo.toLowerCase().includes(texto.toLowerCase())))
+    .sort((a, b) => b.momento.localeCompare(a.momento))
+    .slice(0, 200);
+}
 
 // ------------------------------------------------------------- incidentes
 

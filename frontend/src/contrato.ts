@@ -79,6 +79,52 @@ export type RespuestaSerie = {
 export type RespuestaMetricas = { activo: string; metricas: string[] };
 export type RespuestaDimensiones = { activo: string; metrica: string; dimensiones: Record<string, string[]> };
 
+// ------------------------------------------- registros y trazas (1.2, H-016/17)
+
+// severidad_num sigue OpenTelemetry: 9 info, 13 aviso, 17 error, 21 fatal
+export type Registro = {
+  momento: string;
+  service_name: string;
+  host_name: string;
+  severidad: string;
+  severidad_num: number;
+  cuerpo: string;
+  traza_id: string; // "" si el registro no viene de una traza
+  span_id: string;
+  atributos: Record<string, string>;
+};
+export type RespuestaRegistros = { activo: string; desde: string; hasta: string; registros: Registro[] };
+
+// GET /api/activos/{id}/trazas: una fila por traza que toco el activo
+export type ResumenTraza = {
+  traza_id: string;
+  inicio: string;
+  fin: string;
+  duracion_ns: number;
+  spans: number;
+  errores: number;
+  raiz: string; // nombre del span raiz; "" si no cayo en la ventana
+  servicios: string[];
+};
+export type RespuestaTrazas = { activo: string; desde: string; hasta: string; trazas: ResumenTraza[] };
+
+export type Span = {
+  inicio: string;
+  fin: string;
+  duracion_ns: number;
+  span_id: string;
+  padre_id: string; // "" en la raiz
+  nombre: string;
+  tipo: string;
+  estado: string; // "error" | "ok" | "unset"
+  estado_mensaje: string;
+  zenit_asset_id: string;
+  service_name: string;
+  host_name: string;
+  atributos: Record<string, string>;
+};
+export type RespuestaTraza = { traza_id: string; spans: Span[] };
+
 // ---------------------------------------------------------- incidentes (§3)
 
 export type EstadoIncidente = "detectada" | "diagnosticada" | "confirmada" | "falso_positivo" | "cerrada";

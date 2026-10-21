@@ -13,6 +13,9 @@ import type {
   PeticionEstado,
   PeticionSesion,
   ReporteCostos,
+  RespuestaRegistros,
+  RespuestaTraza,
+  RespuestaTrazas,
   RespuestaDimensiones,
   RespuestaMetricas,
   RespuestaSerie,
@@ -117,6 +120,20 @@ export const api = {
     if (agrupar) q.set("agrupar", agrupar);
     return pedir<RespuestaSerie>(`/api/activos/${c(activo)}/series/${c(metrica)}?${q}`, { senal: s });
   },
+
+  // registros y trazas (1.2)
+  registros: (activo: string, desde: Date, hasta: Date, f: { severidadMinima?: number; texto?: string } = {}, s?: AbortSignal) => {
+    const q = new URLSearchParams({ desde: desde.toISOString(), hasta: hasta.toISOString(), limite: "200" });
+    if (f.severidadMinima) q.set("severidad_minima", String(f.severidadMinima));
+    if (f.texto) q.set("texto", f.texto);
+    return pedir<RespuestaRegistros>(`/api/activos/${c(activo)}/registros?${q}`, { senal: s });
+  },
+  trazas: (activo: string, desde: Date, hasta: Date, soloErrores = false, s?: AbortSignal) => {
+    const q = new URLSearchParams({ desde: desde.toISOString(), hasta: hasta.toISOString(), limite: "100" });
+    if (soloErrores) q.set("solo_errores", "true");
+    return pedir<RespuestaTrazas>(`/api/activos/${c(activo)}/trazas?${q}`, { senal: s });
+  },
+  traza: (id: string, s?: AbortSignal) => pedir<RespuestaTraza>(`/api/trazas/${c(id)}`, { senal: s }),
 
   // incidentes
   incidentes: (filtro: { activo?: string } = {}, s?: AbortSignal) => {

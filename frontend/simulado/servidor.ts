@@ -141,6 +141,42 @@ const RUTAS: Ruta[] = [
     },
   },
 
+  // ---- registros y trazas (1.2)
+  {
+    metodo: "GET",
+    patron: /^\/api\/activos\/([^/]+)\/registros$/,
+    permiso: "registros:ver",
+    h: ({ url }, m) => {
+      const hasta = fecha(url.searchParams.get("hasta"), new Date());
+      const desde = fecha(url.searchParams.get("desde"), new Date(hasta.getTime() - 3600_000));
+      const activo = decodeURIComponent(m[1]);
+      const registros =
+        escenario() === "vacio" ? [] : d.registrosDe(activo, desde, hasta, Number(url.searchParams.get("severidad_minima") ?? 0), url.searchParams.get("texto"));
+      return { activo, desde: desde.toISOString(), hasta: hasta.toISOString(), registros };
+    },
+  },
+  {
+    metodo: "GET",
+    patron: /^\/api\/activos\/([^/]+)\/trazas$/,
+    permiso: "registros:ver",
+    h: ({ url }, m) => {
+      const hasta = fecha(url.searchParams.get("hasta"), new Date());
+      const desde = fecha(url.searchParams.get("desde"), new Date(hasta.getTime() - 3600_000));
+      const activo = decodeURIComponent(m[1]);
+      const trazas = escenario() === "vacio" ? [] : d.trazasDe(activo, desde, hasta, url.searchParams.get("solo_errores") === "true");
+      return { activo, desde: desde.toISOString(), hasta: hasta.toISOString(), trazas };
+    },
+  },
+  {
+    metodo: "GET",
+    patron: /^\/api\/trazas\/([0-9a-f]{32})$/,
+    permiso: "registros:ver",
+    h: ({ res }, m) => {
+      const spans = d.traza(m[1]);
+      return spans.length ? { traza_id: m[1], spans } : enviar(res, 404, { detail: "no hay spans con ese traza_id en los ultimos 7 dias" });
+    },
+  },
+
   // ---- incidentes
   {
     metodo: "GET",
