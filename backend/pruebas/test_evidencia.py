@@ -153,6 +153,7 @@ def test_recupera_las_tres_senales():
     assert afectada["resumen"]["antes_mediana"] == pytest.approx(7.6e9)
     assert afectada["resumen"]["durante_max"] == pytest.approx(10.8e9)
     assert afectada["resumen"]["cambio_relativo"] == pytest.approx(10.8 / 7.6 - 1)
+    assert afectada["resumen"]["cambio_absoluto"] == pytest.approx(3.2e9)
     assert afectada["puntos"] and len(afectada["puntos"]) <= evidencia.PUNTOS_MAXIMOS
 
     relacionadas = [m for m in ev["metricas"] if m["papel"] == "relacionada"]
@@ -264,3 +265,20 @@ def test_un_diagnostico_no_cambia_una_anomalia_ya_descartada(pg):
     with pg.cursor() as cur:
         cur.execute("SELECT estado FROM anomalias WHERE id = %s", (id_,))
         assert cur.fetchone()[0] == "falso_positivo"
+
+
+def test_el_cambio_se_mide_contra_el_maximo_no_contra_la_mediana():
+    """Como la anomalia 29 de Azure: un pico corto y despues 15 minutos normales."""
+    t0 = INICIO - timedelta(minutes=30)
+    puntos = [(t0 + timedelta(minutes=i), 100.0) for i in range(30)]          # antes
+    puntos += [(INICIO + timedelta(minutes=i), 300.0) for i in range(5)]       # pico corto
+    puntos += [(INICIO + timedelta(minutes=5 + i), 100.0) for i in range(20)]  # normalidad
+    r = evidencia._resumen(puntos, INICIO, INICIO + timedelta(minutes=25))
+    assert r["cambio_relativo"] == pytest.approx(2.0)
+    assert r["cambio_relativo_mediana"] == pytest.approx(0.0)
+
+
+def test_con_linea_base_cero_queda_el_cambio_absoluto():
+    puntos = [(INICIO - timedelta(minutes=i), 0.0) for i in range(1, 10)] + [(INICIO, 0.02)]
+    r = evidencia._resumen(sorted(puntos), INICIO, INICIO + timedelta(minutes=1))
+    assert r["cambio_relativo"] is None and r["cambio_absoluto"] == pytest.approx(0.02)

@@ -136,8 +136,16 @@ def _resumen(puntos: list, inicio: datetime, fin: datetime) -> dict:
         "puntos_antes": len(antes),
         "puntos_durante": len(durante),
     }
-    base, ahora = r["antes_mediana"], r["durante_mediana"]
-    r["cambio_relativo"] = (ahora - base) / abs(base) if base not in (None, 0) and ahora is not None else None
+    # El cambio se mide contra el maximo, no contra la mediana: el detector
+    # solo mira subidas, y la mediana de "durante" se diluye con los minutos
+    # de normalidad que el cierre exige antes de cerrar (en Azure, la
+    # anomalia 29 tenia 0,07 % de cambio por mediana y 177 % por maximo).
+    # El cambio absoluto queda aunque la linea base sea cero (CPU wait).
+    base, pico, mediana = r["antes_mediana"], r["durante_max"], r["durante_mediana"]
+    r["cambio_absoluto"] = pico - base if base is not None and pico is not None else None
+    r["cambio_relativo"] = (pico - base) / abs(base) if base not in (None, 0) and pico is not None else None
+    r["cambio_relativo_mediana"] = ((mediana - base) / abs(base)
+                                    if base not in (None, 0) and mediana is not None else None)
     return r
 
 
@@ -184,8 +192,9 @@ def _serie_relacionada(repositorio, activo, senal: Senal, v) -> list:
             "resolucion_s": r.intervalo_s,
             "resumen": _resumen(puntos, *v["durante"]),
         })
-    # las que mas cambiaron primero; sin cambio medible al final
-    salida.sort(key=lambda s: abs(s["resumen"]["cambio_relativo"] or 0), reverse=True)
+    # las que mas cambiaron primero; sin cambio relativo medible (base cero), por el absoluto
+    salida.sort(key=lambda s: (abs(s["resumen"]["cambio_relativo"] or 0), abs(s["resumen"]["cambio_absoluto"] or 0)),
+                reverse=True)
     return salida[:SERIES_POR_SENAL]
 
 
