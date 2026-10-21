@@ -9,7 +9,7 @@
 //   normal (por defecto) | vacio | error | lento | intermitente
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
-import type { Permiso, PeticionEstado, PeticionSesion, RespuestaSesion, ResumenImportacion, Rol, Yo } from "../src/contrato";
+import type { IncidenteMarcado, Permiso, PeticionEstado, PeticionSesion, RespuestaSesion, ResumenImportacion, Rol, Yo } from "../src/contrato";
 import * as d from "./datos";
 
 const MATRIZ: Record<Permiso, Rol[]> = {
@@ -195,14 +195,19 @@ const RUTAS: Ruta[] = [
     metodo: "POST",
     patron: /^\/api\/incidentes\/(\d+)\/estado$/,
     permiso: "incidentes:gestionar",
-    h: async ({ req, res }, m) => {
+    h: async ({ req, res, usuario }, m) => {
       const p = leerJson<PeticionEstado>(await leerCuerpo(req));
       if (!p || !["confirmada", "falso_positivo"].includes(p.estado))
         return enviar(res, 422, { detail: "estado invalido: solo confirmada o falso_positivo" });
-      if (!d.existeIncidente(id(m))) return enviar(res, 404, { detail: `no existe el incidente ${m[1]}` });
+      const actual = d.incidentes().find((i) => i.id === id(m));
+      if (!actual) return enviar(res, 404, { detail: `no existe el incidente ${m[1]}` });
+      // como la API (H-037): cerrada y falso_positivo ya no cambian
+      if (actual.estado === "cerrada" || actual.estado === "falso_positivo")
+        return enviar(res, 409, { detail: `el incidente ${m[1]} ya esta cerrado o descartado` });
       d.estados.set(id(m), p.estado);
-      // el contrato no fija la respuesta; se devuelve el incidente como queda
-      return d.incidentes().find((i) => i.id === id(m));
+      const marca = { marcada_por: usuario!, marcada_en: new Date().toISOString() };
+      d.marcas.set(id(m), marca);
+      return { ...d.incidentes().find((i) => i.id === id(m))!, ...marca } satisfies IncidenteMarcado;
     },
   },
   {

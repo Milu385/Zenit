@@ -10,6 +10,7 @@ import type {
   Hallazgo,
   Huerfana,
   Incidente,
+  IncidenteMarcado,
   PeticionEstado,
   PeticionSesion,
   ReporteCostos,
@@ -142,9 +143,9 @@ export const api = {
     return pedir<Incidente[]>(`/api/incidentes${q.toString() ? `?${q}` : ""}`, { senal: s });
   },
   incidente: (id: number, s?: AbortSignal) => pedir<DetalleIncidente>(`/api/incidentes/${id}`, { senal: s }),
-  // el contrato no fija el cuerpo de la respuesta: la interfaz no depende de el
+  // responde el incidente como queda (H-037); 409 si ya estaba cerrado o descartado
   cambiarEstado: (id: number, estado: PeticionEstado["estado"]) =>
-    pedir<unknown>(`/api/incidentes/${id}/estado`, { metodo: "POST", ...json({ estado } satisfies PeticionEstado) }),
+    pedir<IncidenteMarcado>(`/api/incidentes/${id}/estado`, { metodo: "POST", ...json({ estado } satisfies PeticionEstado) }),
   // 200 con el diagnostico si fue inmediato; 202 (undefined) si quedo en cola
   pedirDiagnostico: (id: number) => pedir<Diagnostico | undefined>(`/api/incidentes/${id}/diagnostico`, { metodo: "POST" }),
 

@@ -385,6 +385,7 @@ const INCIDENTES_BASE: IncidenteBase[] = [
 
 // cambios hechos durante la sesion del simulador
 export const estados = new Map<number, Incidente["estado"]>();
+export const marcas = new Map<number, { marcada_por: string; marcada_en: string }>();
 // diagnosticos pedidos: listos a partir de `listo`
 export const pedidos = new Map<number, { listo: number }>();
 
