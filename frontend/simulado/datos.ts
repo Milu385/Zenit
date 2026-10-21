@@ -14,6 +14,7 @@ import type {
   RespuestaSerie,
   Rol,
 } from "../src/contrato";
+import type { AnalisisCostos } from "../src/contrato"; // H-047, fuera del contrato
 
 const MIN = 60_000;
 const hace = (ms: number) => new Date(Date.now() - ms).toISOString();
@@ -492,6 +493,53 @@ export function configuraciones(): Hallazgo[] {
 }
 
 // ---------------------------------------------------------------- costos
+
+// Tres meses de facturas para la tendencia y el cruce con el uso (H-047).
+const CRITERIO = { cpu_promedio_max: 0.1, cpu_pico_max: 0.4, memoria_promedio_max: 0.4, horas_minimas: 24 };
+
+export function analisisCostos(desde: string | null, hasta: string | null, vacio: boolean): AnalisisCostos {
+  const periodo = { desde: desde ?? "2026-07-01", hasta: hasta ?? IMPORTADO.hasta };
+  const todos = ["2026-07", "2026-08", "2026-09"];
+  const meses = vacio ? [] : todos.filter((m) => m >= periodo.desde.slice(0, 7) && m <= periodo.hasta.slice(0, 7));
+  const tomar = (xs: number[]) => meses.map((m) => xs[todos.indexOf(m)]);
+  const suma = (xs: number[]) => Math.round(tomar(xs).reduce((a, b) => a + b, 0) * 100) / 100;
+  const PLAT = [24, 26.4, 28.8];
+  const NODO = [12, 12, 12];
+  const LEGADO = [0, 6, 6];
+  const activos: AnalisisCostos["activos"] = vacio
+    ? []
+    : [
+        { activo: "activo-aws-legado-01", entorno: "aws", proveedor: "digitalocean", costo: suma(LEGADO), horas_medidas: 720, cpu_promedio: 0.021, cpu_pico: 0.08, memoria_promedio: 0.18, subutilizado: true, motivo: "CPU promedio 2% y pico 8%, memoria promedio 18%, en 720 h medidas" },
+        { activo: "activo-do-plataforma", entorno: "plataforma", proveedor: "digitalocean", costo: suma(PLAT), horas_medidas: 2160, cpu_promedio: 0.46, cpu_pico: 0.93, memoria_promedio: 0.71, subutilizado: false, motivo: "usa recursos: CPU promedio 46%, pico de CPU 93%, memoria promedio 71%" },
+        { activo: "activo-do-nodo-01", entorno: "digitalocean", proveedor: "digitalocean", costo: suma(NODO), horas_medidas: 2160, cpu_promedio: 0.06, cpu_pico: 0.62, memoria_promedio: 0.33, subutilizado: false, motivo: "usa recursos: pico de CPU 62%" },
+        { activo: "activo-azure-web-02", entorno: "azure", proveedor: null, costo: 0, horas_medidas: 0, cpu_promedio: null, cpu_pico: null, memoria_promedio: null, subutilizado: null, motivo: "sin costo en el periodo" },
+      ];
+  return {
+    moneda: "USD",
+    periodo,
+    criterio: CRITERIO,
+    activos,
+    tendencia: {
+      meses,
+      por_entorno: meses.length
+        ? [
+            { entorno: "plataforma", montos: tomar(PLAT) },
+            { entorno: "digitalocean", montos: tomar(NODO) },
+            { entorno: "aws", montos: tomar(LEGADO) },
+            { entorno: "sin asignar", montos: tomar([1.1, 1.2, 1.37]) },
+          ]
+        : [],
+      por_activo: meses.length
+        ? [
+            { activo: "activo-do-plataforma", entorno: "plataforma", montos: tomar(PLAT) },
+            { activo: "activo-do-nodo-01", entorno: "digitalocean", montos: tomar(NODO) },
+            { activo: "activo-aws-legado-01", entorno: "aws", montos: tomar(LEGADO) },
+          ]
+        : [],
+    },
+    uso: { desde: `${periodo.desde}T00:00:00+00:00`, hasta: `${periodo.hasta}T23:59:59+00:00`, disponible: true },
+  };
+}
 
 // Una factura de septiembre ya importada. Sin fechas, el periodo es todo lo
 // importado (como la API).

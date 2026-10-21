@@ -425,6 +425,40 @@ class RepositorioInflux:
         )
         return {f["a"]: round(float(f["v"]), 4) for f in filas if f.get("v") is not None}
 
+    # (metrica, estado, invertir): CPU ocupada = 1 - idle; memoria ocupada = used
+    _USO = {"cpu": ("system_cpu_utilization", "idle", True), "memoria": ("system_memory_utilization", "used", False)}
+
+    def uso_por_hora(self, desde: datetime, hasta: datetime) -> dict:
+        """{activo: {"cpu": [...], "memoria": [...]}}: la fraccion ocupada de
+        cada hora con datos, del resumen por hora. Las CPU de un activo se
+        promedian juntas (ponderadas por value_count)."""
+        bd = BASE_DE["1h"]
+        columnas = self._columnas(bd)
+        salida: dict = {}
+        for clave, (metrica, estado, invertir) in self._USO.items():
+            if not {"zenit_asset_id", "state", "value_avg", "value_count"} <= set(columnas.get(metrica, [])):
+                continue
+            t = desde
+            while t < hasta:
+                fin = min(t + TRAMO["1h"], hasta)
+                filas = self._cliente.consultar(
+                    bd,
+                    'SELECT "zenit_asset_id" AS a, '
+                    "CAST(date_bin(INTERVAL '1 hour', time, TIMESTAMP '1970-01-01 00:00:00') AS BIGINT) AS h, "
+                    'sum("value_avg" * "value_count") / sum("value_count") AS v '
+                    f"FROM {_citar(metrica)} WHERE \"state\" = $estado "
+                    f"AND time >= {_literal_tiempo(t)} AND time < {_literal_tiempo(fin)} GROUP BY 1, 2",
+                    {"estado": estado},
+                )
+                for f in filas:
+                    if f.get("v") is None or not f.get("a"):
+                        continue
+                    v = float(f["v"])
+                    salida.setdefault(f["a"], {"cpu": [], "memoria": []})[clave].append(
+                        round(1 - v if invertir else v, 4))
+                t = fin
+        return salida
+
     def disponible(self) -> bool:
         return self._cliente.disponible()
 

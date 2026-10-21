@@ -206,6 +206,18 @@ const RUTAS: Ruta[] = [
     },
   },
   {
+    // FUERA DEL CONTRATO (H-047)
+    metodo: "GET",
+    patron: /^\/api\/gobernanza\/costos\/analisis$/,
+    permiso: "costos:ver",
+    h: ({ url, res }) => {
+      const desde = url.searchParams.get("desde") || null;
+      const hasta = url.searchParams.get("hasta") || null;
+      if (desde && hasta && desde > hasta) return enviar(res, 422, { detail: "desde no puede ser posterior a hasta" });
+      return d.analisisCostos(desde, hasta, escenario() === "vacio");
+    },
+  },
+  {
     // FUERA DEL CONTRATO (NOTAS.md)
     metodo: "POST",
     patron: /^\/api\/gobernanza\/costos\/facturas$/,
