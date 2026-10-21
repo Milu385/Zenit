@@ -21,11 +21,12 @@ que sube en `user` baja en `idle`. Por eso cada senal declara sus `filtros`.
 resta de 1); aqui queda declarado para todas.
 
 **2. Un contador acumulado diluye la senal hasta hacerla invisible.**
-`system_disk_io`, `system_network_io`, `system_paging_operations` y `calls`
-son sumas acumuladas: solo crecen. Sobre una rampa, el MAD crece junto con
-la rampa, asi que el puntaje z se queda acotado y nunca llega al corte
-critico. Medido con una serie construida a mano (90 min a 100 u/min, 30 min
-a 400 u/min, vuelta a 100; ventana de 60, corte 3.5):
+`system_disk_io`, `system_network_io`, `system_paging_operations` y
+`traces_span_metrics_calls` son sumas acumuladas: solo crecen. Sobre una
+rampa, el MAD crece junto con la rampa, asi que el puntaje z se queda
+acotado y nunca llega al corte critico. Medido con una serie construida a
+mano (90 min a 100 u/min, 30 min a 400 u/min, vuelta a 100; ventana de 60,
+corte 3.5):
 
 | Serie                       | Puntos en critico | z dentro del fallo |
 |-----------------------------|-------------------|--------------------|
@@ -44,32 +45,58 @@ columnas `*_s` del CSV del cuaderno ya traian hechas. La prueba
 `test_contador_acumulado_*` en `backend/pruebas/test_deteccion.py` fija
 este comportamiento.
 
+**Como se decide la clase.** No es Gauge contra Sum: es la columna
+`Monotonic` de la documentacion del receptor. `system.memory.usage`,
+`system.filesystem.usage`, `system.paging.usage` y `system.processes.count`
+son Sum con `Monotonic: false`, es decir el nivel actual, y van como MEDIDA.
+`system.disk.io`, `system.network.io` y `system.paging.operations` son Sum
+con `Monotonic: true` y van como ACUMULADA.
+
 Agregar una senal es agregar una linea a SENALES. No hay logica por metrica
 en el detector.
 
-Los nombres: hay que verificarlos contra la plataforma
-------------------------------------------------------
+De donde salen estos nombres
+----------------------------
 
-Los nombres de tabla y los valores de dimension de abajo salen de las
-convenciones del receptor `hostmetrics` de OpenTelemetry (el que configura
-`laboratorio/agente/collector.yaml`) mas la regla de conversion de nombres
-de `docs/esquema-medicion.md`, seccion 3. NO estan verificados contra la
-plataforma, porque los nombres reales solo se ven consultando el motor.
+Verificados el 19 de octubre de 2026 contra la documentacion del receptor
+`hostmetrics` y del conector `spanmetrics` de la version que corre el
+laboratorio (`otel/opentelemetry-collector-contrib:0.116.1`, fijada en
+`laboratorio/compose.yml`), mas la regla de conversion de nombres de
+`docs/esquema-medicion.md`, seccion 3.
 
-Para verificarlos, con la plataforma arriba:
+Lo que esa verificacion corrigio del primer intento de este catalogo:
+
+| Se habia puesto | Problema | Quedo |
+|---|---|---|
+| `system_filesystem_utilization` | Metrica opcional, y `collector.yaml` solo activa las de cpu y memoria: no existe en esta plataforma. Ademas `utilization` no tiene dimension `state` | `system_filesystem_usage` (bytes, no fraccion) |
+| `system_paging_utilization` | Opcional y tampoco activada | `system_paging_usage` |
+| `calls` | El conector agrega su espacio de nombres por defecto, `traces.span.metrics` | `traces_span_metrics_calls` |
+| `system_paging_operations` con solo `direction` | Tiene tambien `type` (`major`/`minor`): sin separarlas se promedian dos cosas distintas | agrupada por `type` |
+| `calls` filtrando `status_code=STATUS_CODE_ERROR` | La documentacion del conector muestra dos convenciones distintas para ese valor (`Error` y `STATUS_CODE_*`) segun la version y una compuerta de funcionalidad | agrupada por `status_code`, sin fijar el valor |
+
+**Dos metricas opcionales si estan activadas** en `collector.yaml`:
+`system.cpu.utilization` y `system.memory.utilization`. Si alguien activara
+ademas `system.filesystem.utilization`, la senal de disco podria volver a
+la fraccion, que es la que usaba el cuaderno (`disco_used_frac`). No
+conviene hacerlo durante la campana de Azure que arranco el 16 de octubre:
+cambiaria a mitad de camino lo que contiene el conjunto con el que se evalua
+H-029.
+
+Aun asi, los nombres solo se confirman del todo contra la plataforma:
 
     docker compose exec api python -m zenit.deteccion --senales
 
-Lista, activo por activo, que senales del catalogo existen y cuales no, con
-las dimensiones que el repositorio reporta para cada metrica. Lo que
-aparezca como faltante se corrige aqui, en una linea, sin tocar el detector.
+Dice, activo por activo, que senales del catalogo existen y cuales no, y
+ademas que metricas estan llegando que ninguna senal vigila. Lo que aparezca
+se corrige aqui, en una linea, sin tocar el detector.
 
 Lo que este catalogo no cubre todavia
 -------------------------------------
 
 **Latencia.** La duracion de las llamadas llega como histograma, que el
-esquema parte en dos tablas (`duration_count` y `duration_sum`). La latencia
-media es `d(sum)/d(count)`: un cociente de dos tasas, es decir dos series
+esquema parte en dos tablas (`traces_span_metrics_duration_count` y
+`traces_span_metrics_duration_sum`). La latencia media es
+`d(sum)/d(count)`: un cociente de dos tasas, es decir dos series
 combinadas, y todo este archivo trabaja con una serie a la vez. Queda
 declarado como hueco: la inyeccion de tipo `latencia` del laboratorio no la
 detecta este metodo, y eso tiene que salir asi en la evaluacion de H-029.
@@ -151,18 +178,30 @@ SENALES = (
         descripcion="Memoria en uso",
         fallas=("memoria",), equivale_a="memoria_used",
     ),
+    # `usage`, no `utilization`: la segunda es opcional y no esta activada.
+    # Sum no monotonica (el nivel actual), de ahi MEDIDA. Por dispositivo,
+    # que es el nombre del archivo de intercambio.
     Senal(
-        metrica="system_paging_utilization", clase=MEDIDA, filtros={"state": "used"},
-        descripcion="Espacio de intercambio en uso",
+        metrica="system_paging_usage", clase=MEDIDA, filtros={"state": "used"},
+        agrupar="device",
+        descripcion="Espacio de intercambio en uso, por dispositivo",
         fallas=("memoria",),
     ),
     # --------------------------------------------------------------- disco
     # Por punto de montaje: un sistema de archivos que se llena es local a
     # su montaje, y promediar todos los montajes lo diluye.
+    #
+    # `usage` da bytes ocupados, no la fraccion que usaba el cuaderno: la
+    # metrica de fraccion (`system.filesystem.utilization`) es opcional y
+    # `collector.yaml` no la activa. Para el puntaje z da igual, porque mide
+    # la desviacion contra la propia linea base de la serie; lo que cambia es
+    # que el valor de la evidencia va en bytes. Filtrar `state=used` aqui no
+    # es opcional: sin el se promedian used, free y reserved, cuya suma es
+    # casi constante, y la senal desaparece.
     Senal(
-        metrica="system_filesystem_utilization", clase=MEDIDA, filtros={"state": "used"},
+        metrica="system_filesystem_usage", clase=MEDIDA, filtros={"state": "used"},
         agrupar="mountpoint",
-        descripcion="Sistema de archivos ocupado, por punto de montaje",
+        descripcion="Bytes ocupados del sistema de archivos, por punto de montaje",
         fallas=("disco",), equivale_a="disco_used_frac",
     ),
     Senal(
@@ -178,9 +217,13 @@ SENALES = (
         fallas=("disco",),
     ),
     # ----------------------------------------------------------- paginacion
+    # Agrupada por `type` (major/minor): un fallo mayor va a disco y es el
+    # que indica presion de memoria; uno menor se resuelve en RAM. Sin
+    # separarlos se promedian dos cosas de magnitud muy distinta.
     Senal(
         metrica="system_paging_operations", clase=ACUMULADA, filtros={"direction": "page_in"},
-        descripcion="Paginas traidas de disco por segundo",
+        agrupar="type",
+        descripcion="Paginas traidas por segundo, por tipo de fallo",
         fallas=("memoria",), equivale_a="paginacion_s",
     ),
     # ----------------------------------------------------------------- red
@@ -203,14 +246,23 @@ SENALES = (
         fallas=("cpu",), equivale_a="procesos_running",
     ),
     # ------------------------------------------- aplicacion (spanmetrics)
-    # Llamadas con error por segundo. El cuaderno usaba la proporcion contra
-    # el total (`tasa_error_relativa`); eso es un cociente de dos series y
-    # queda para cuando el detector sepa combinarlas. La tasa absoluta de
-    # errores si sirve y es la senal mas cercana a una caida que este metodo
-    # puede ver hacia arriba.
+    # Llamadas por segundo, una serie por codigo de estado. El cuaderno usaba
+    # la proporcion de errores contra el total (`tasa_error_relativa`); eso
+    # es un cociente de dos series y queda para cuando el detector sepa
+    # combinarlas. La tasa absoluta por codigo si sirve, y es lo mas cercano
+    # a una caida que este metodo puede ver hacia arriba.
+    #
+    # Se agrupa por `status_code` en vez de filtrarlo porque el valor exacto
+    # depende de la version del conector y de una compuerta de
+    # funcionalidad: asi la serie de errores se evalua sola sea `Error` o
+    # `STATUS_CODE_ERROR`, y el valor real queda escrito en la columna
+    # `dimensiones` de la anomalia.
+    #
+    # El nombre lleva el espacio de nombres por defecto del conector
+    # (`traces.span.metrics`), que `collector.yaml` no cambia.
     Senal(
-        metrica="calls", clase=ACUMULADA, filtros={"status_code": "STATUS_CODE_ERROR"},
-        descripcion="Llamadas con error por segundo",
+        metrica="traces_span_metrics_calls", clase=ACUMULADA, agrupar="status_code",
+        descripcion="Llamadas por segundo, por codigo de estado",
         fallas=("caida", "latencia"), equivale_a="tasa_errores_pedidos",
     ),
 )

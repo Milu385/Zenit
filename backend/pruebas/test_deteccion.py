@@ -475,23 +475,34 @@ def test_revisar_catalogo_reporta_los_dos_sentidos(monkeypatch):
 
 
 # ------------------------------------------------------------ H-033: severidad
-def test_severidad_usa_los_cortes_del_cuaderno():
-    """Los dos incrementos son los mismos que separan bueno/normal/critico
-    (1.5 y 3.5), aplicados por encima del corte critico."""
-    assert severidad(Z_CRITICO) == "baja"
-    assert severidad(4.9) == "baja"
-    assert severidad(5.0) == "media"            # 3.5 + 1.5
-    assert severidad(6.9) == "media"
-    assert severidad(7.0) == "alta"             # 3.5 + 3.5
-    assert severidad(900.0) == "alta"
+def test_severidad_por_decadas_del_exceso():
+    """Lo que se mide es cuantas veces se supera el corte critico, por
+    decadas: el puntaje va de 3.5 a decenas de miles y unos cortes lineales
+    no dividen ese rango (ver el comentario de `severidad`)."""
+    assert severidad(Z_CRITICO) == "baja"               # exceso 1
+    assert severidad(34.9) == "baja"                    # exceso 9.97
+    assert severidad(35.0) == "media"                   # exceso 10
+    assert severidad(349.0) == "media"
+    assert severidad(350.0) == "alta"                   # exceso 100
+    assert severidad(17000.0) == "alta"
 
 
 def test_severidad_sigue_al_corte_critico_si_se_ajusta():
     """Un administrador que mueva el corte critico (HU-52) mueve con el toda
-    la escala de severidad, sin numeros nuevos."""
-    assert severidad(5.0, z_critico=5.0) == "baja"
-    assert severidad(6.5, z_critico=5.0) == "media"
-    assert severidad(8.5, z_critico=5.0) == "alta"
+    la escala, porque la severidad mide el exceso relativo a ese corte y no
+    una cantidad absoluta."""
+    assert severidad(5.0, z_critico=5.0) == "baja"      # exceso 1
+    assert severidad(50.0, z_critico=5.0) == "media"    # exceso 10
+    assert severidad(500.0, z_critico=5.0) == "alta"    # exceso 100
+
+
+def test_severidad_separa_el_ruido_de_los_fallos_reales():
+    """La propiedad que justifica el criterio, con los valores medidos en el
+    data.csv del laboratorio: los puntajes tipicos del ruido (mediana 9.7,
+    maximo 175.7) no llegan a `alta`, y los de dentro de una inyeccion si."""
+    ruido = [3.6, 3.8, 5.0, 8.8, 9.7, 11.6, 11.9, 19.3, 175.7]
+    assert all(severidad(z) != "alta" for z in ruido)
+    assert severidad(1988.0) == "alta"                  # tercer cuartil de los reales
 
 
 # -------------------------------------------------------------- H-033: cierre

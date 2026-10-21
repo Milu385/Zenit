@@ -136,30 +136,62 @@ def clasificar(z: float, z_normal: float = Z_NORMAL, z_critico: float = Z_CRITIC
     return "bueno"
 
 
-# Severidad (H-033, primer criterio). Los dos incrementos son los mismos que
-# el cuaderno usa para separar bueno, normal y critico (1.5 y 3.5), aplicados
-# ahora por encima del corte critico. Asi la escala de severidad no introduce
-# numeros nuevos: una anomalia es `baja` mientras este en el primer tramo
-# despues del corte, `media` pasado un incremento normal mas, y `alta` pasado
-# un incremento critico mas.
+# Severidad (H-033, primer criterio).
 #
-#   baja    3.5 <= z < 5.0     (z_critico, z_critico + 1.5)
-#   media   5.0 <= z < 7.0     (z_critico + 1.5, z_critico + 3.5)
-#   alta           z >= 7.0    (z_critico + 3.5)
+# Lo que se mide no es el puntaje suelto, sino **cuantas veces supera el corte
+# critico**: exceso = z / z_critico. Asi el corte del cuaderno queda como
+# unidad y la escala no introduce un umbral nuevo. Los tramos son decadas:
+#
+#   baja      1 <= exceso < 10     (z de 3.5 a 35)
+#   media    10 <= exceso < 100    (z de 35 a 350)
+#   alta          exceso >= 100    (z >= 350)
+#
+# Por que decadas y no incrementos. El primer intento sumaba al corte los
+# mismos pasos que separan bueno, normal y critico (+1.5 y +3.5, o sea cortes
+# en 5 y 7). Medido sobre las 42 anomalias que el detector abre en el
+# `data.csv` del laboratorio, con la verdad de referencia del propio archivo
+# para saber cuales cayeron dentro de una inyeccion:
+#
+#   z observado: de 3.6 a 17 096; mediana 39.6 dentro de una inyeccion y
+#   9.7 fuera. Son cuatro ordenes de magnitud, y unos cortes lineales en 5 y 7
+#   no dividen ese rango: casi todo queda por encima.
+#
+#   | Criterio            | Dentro (29)            | Ruido (13)            | Acierto de 'alta' |
+#   |---------------------|------------------------|-----------------------|-------------------|
+#   | lineal (+1.5 / +3.5)| 4 baja, 1 media, 24 alta | 4 baja, 1 media, 8 alta | 24 de 32 (75 %) |
+#   | decadas (x10/x100)  | 14 baja, 5 media, 10 alta | 12 baja, 1 media, 0 alta | 10 de 10 (100 %) |
+#
+# Con decadas el ruido se va entero a `baja` y ninguna anomalia fuera de una
+# inyeccion llega a `alta`. La eleccion no esta ajustada al dato: x20/x200
+# tambien da 100 % y x5/x50 da 92 %; una decada es una decada, no una
+# constante calibrada. El puntaje crece de forma multiplicativa (depende de lo
+# estrecha que sea la linea base del activo), y agrupar por orden de magnitud
+# es lo que corresponde a una cantidad multiplicativa.
+#
+# Lo que hay que saber al leerla. La severidad depende de lo estrecha que sea
+# la linea base de la serie, no solo de lo grave que sea el fallo: en la
+# medicion anterior las 10 anomalias `alta` salieron todas de
+# `disco_used_frac`, porque un sistema de archivos que normalmente no se mueve
+# produce puntajes enormes en cuanto se mueve. Es correcto en terminos
+# estadisticos (es una desviacion extraordinaria para esa serie) y es
+# inherente a cualquier severidad construida sobre el puntaje z, no algo que
+# agreguen las decadas. Conviene decirlo asi en el informe en vez de leer la
+# severidad como una medida de impacto operativo.
 #
 # La severidad se fija al abrir y no se recalcula: describe con que fuerza
-# irrumpio la desviacion, que es lo que el operador necesita para priorizar.
-# Como el puntaje queda guardado en la fila, un criterio distinto se puede
-# recalcular despues sobre lo ya detectado sin volver a correr nada.
-PASO_SEVERIDAD_MEDIA = 1.5
-PASO_SEVERIDAD_ALTA = 3.5
+# irrumpio la desviacion. Como el puntaje queda guardado en la fila, cambiar
+# este criterio despues no obliga a volver a detectar nada: la severidad de lo
+# ya detectado se recalcula con una consulta.
+EXCESO_MEDIA = 10
+EXCESO_ALTA = 100
 
 
 def severidad(z: float, z_critico: float = Z_CRITICO) -> str:
     """'baja' | 'media' | 'alta' para una desviacion ya clasificada critica."""
-    if z >= z_critico + PASO_SEVERIDAD_ALTA:
+    exceso = z / z_critico
+    if exceso >= EXCESO_ALTA:
         return "alta"
-    if z >= z_critico + PASO_SEVERIDAD_MEDIA:
+    if exceso >= EXCESO_MEDIA:
         return "media"
     return "baja"
 
