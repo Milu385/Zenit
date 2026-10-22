@@ -7,7 +7,7 @@ import SegunCarga from "../componentes/SegunCarga";
 import VistaSerie from "../componentes/VistaSerie";
 import type { DetalleIncidente as Detalle, PeticionEstado } from "../contrato";
 import { Enlace } from "../enrutador";
-import { ABIERTO, duracion, fechaHora, fechaValida, hace, nombreMetrica, tituloIncidente } from "../formato";
+import { ABIERTO, claseDe, duracion, fechaHora, fechaValida, formatoValor, hace, nombreMetrica, tituloIncidente } from "../formato";
 import { useSesion } from "../sesion";
 import { useCarga } from "../useCarga";
 
@@ -57,12 +57,23 @@ function piezas(d: Detalle): Pieza[] {
   return [...citadas, ...detector];
 }
 
-function VistaPieza({ activo, p }: { activo: string; p: Pieza }) {
+// La serie de la metrica que se desvio abre filtrada con las dimensiones del
+// incidente (device=sda1, direction=write...). Las relacionadas son otras
+// metricas: esas dimensiones no les aplican.
+function VistaPieza({ activo, p, filtros }: { activo: string; p: Pieza; filtros?: Record<string, string> }) {
   const ventana = useMemo(
     () => ({ desde: new Date(new Date(p.desde).getTime() - MARGEN_MS), hasta: new Date(new Date(p.hasta).getTime() + MARGEN_MS) }),
     [p.desde, p.hasta],
   );
-  return <VistaSerie activo={activo} metrica={p.metrica} ventana={ventana} titulo={`${nombreMetrica(p.metrica)} en ${activo}`} />;
+  return (
+    <VistaSerie
+      activo={activo}
+      metrica={p.metrica}
+      ventana={ventana}
+      filtros={filtros}
+      titulo={`${nombreMetrica(p.metrica)} en ${activo}`}
+    />
+  );
 }
 
 const numeroCorto = (v: number | null) => (v == null ? "sin dato" : v.toLocaleString("es-CO", { maximumFractionDigits: 3 }));
@@ -141,6 +152,12 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
 
   const actual = lista.find((p) => p.clave === elegida) ?? null;
   const ev = d.evidencia;
+  const clase = claseDe(d.metrica, ev.clase);
+  // un falso positivo no "sigue" aunque el detector no le haya puesto fin:
+  // para el operador termino cuando lo descarto
+  const sigue = !d.fin && ABIERTO.includes(d.estado);
+  const finEfectivo = d.fin ?? (sigue ? null : d.marcada_en);
+  const dims = Object.entries(d.dimensiones ?? {});
   const citadas = d.diagnostico?.evidencia_citada.length ?? 0;
   return (
     <>
@@ -155,8 +172,8 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
           <h2>{tituloIncidente(d)}</h2>
           <p className="meta">
             En <Enlace a={`/activos/${encodeURIComponent(d.activo)}`}>{d.activo}</Enlace> · empezo {fechaHora(d.inicio)} ({hace(d.inicio)})
-            · dura {duracion(d.inicio, d.fin)}
-            {d.fin ? "" : " y sigue"} · puntaje {numeroCorto(d.puntaje)}
+            · {sigue ? "dura" : "duro"} {duracion(d.inicio, finEfectivo)}
+            {sigue ? " y sigue" : ""} · puntaje {numeroCorto(d.puntaje)}
           </p>
           {d.marcada_por && d.marcada_en && (
             <p className="meta">
@@ -188,15 +205,19 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
         <dl className="cifras-anomalia">
           <div>
             <dt>Metrica</dt>
-            <dd>{nombreMetrica(d.metrica)}</dd>
+            <dd>
+              {nombreMetrica(d.metrica)}
+              {dims.length > 0 && <span className="meta-dato">{dims.map(([k, v]) => `${k}=${v}`).join(", ")}</span>}
+              {clase === "acumulada" && <span className="meta-dato">tasa por segundo</span>}
+            </dd>
           </div>
           <div>
             <dt>Observado</dt>
-            <dd>{numeroCorto(ev.valor_observado)}</dd>
+            <dd>{formatoValor(d.metrica, ev.valor_observado, clase)}</dd>
           </div>
           <div>
             <dt>Esperado</dt>
-            <dd>{numeroCorto(ev.valor_esperado)}</dd>
+            <dd>{formatoValor(d.metrica, ev.valor_esperado, clase)}</dd>
           </div>
           <div>
             <dt>Ventana</dt>
@@ -298,7 +319,12 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
           <p className="meta">
             {d.activo} · {fechaHora(actual.desde)} a {fechaHora(actual.hasta)}, con 10 min de margen a cada lado
           </p>
-          <VistaPieza key={actual.clave} activo={d.activo} p={actual} />
+          <VistaPieza
+            key={actual.clave}
+            activo={d.activo}
+            p={actual}
+            filtros={actual.metrica === d.metrica ? d.dimensiones : undefined}
+          />
         </section>
       )}
     </>

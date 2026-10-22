@@ -117,9 +117,19 @@ export const api = {
       { senal: s },
     ).then((r) => r.dimensiones),
 
-  serie: (activo: string, metrica: string, desde: Date, hasta: Date, agrupar: string, s?: AbortSignal) => {
+  // filtros: dimension -> valor (p. ej. las del incidente: device=sda1, direction=write)
+  serie: (
+    activo: string,
+    metrica: string,
+    desde: Date,
+    hasta: Date,
+    agrupar: string,
+    s?: AbortSignal,
+    filtros: Record<string, string> = {},
+  ) => {
     const q = new URLSearchParams({ desde: desde.toISOString(), hasta: hasta.toISOString() });
     if (agrupar) q.set("agrupar", agrupar);
+    for (const [k, v] of Object.entries(filtros)) q.append("filtro", `${k}:${v}`);
     return pedir<RespuestaSerie>(`/api/activos/${c(activo)}/series/${c(metrica)}?${q}`, { senal: s });
   },
 
