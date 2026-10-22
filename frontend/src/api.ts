@@ -2,6 +2,7 @@
 // formas de contrato.ts.
 import type {
   Activo,
+  ConsumoDiagnostico,
   AnalisisCostos,
   DetalleActivo,
   DetalleIncidente,
@@ -154,6 +155,9 @@ export const api = {
   fuentes: (s?: AbortSignal) => pedir<Fuente[]>("/api/fuentes", { senal: s }),
   huerfanas: (s?: AbortSignal) => pedir<Huerfana[]>("/api/fuentes/huerfanas", { senal: s }),
   descubrimientos: (s?: AbortSignal) => pedir<Descubrimientos>("/api/catalogo/descubrimientos", { senal: s }),
+
+  // FUERA DEL CONTRATO (H-042)
+  consumoDiagnostico: (s?: AbortSignal) => pedir<ConsumoDiagnostico>("/api/diagnostico/consumo", { senal: s }),
 
   // gobernanza
   configuraciones: (s?: AbortSignal) => pedir<Hallazgo[]>("/api/gobernanza/configuraciones", { senal: s }),
