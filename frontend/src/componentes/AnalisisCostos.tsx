@@ -25,6 +25,13 @@ function Marca({ a }: { a: UsoActivo }) {
         <span aria-hidden="true">✓</span> En uso
       </span>
     );
+  // sin costo no hay nada que cruzar: no es falta de datos de uso
+  if (a.costo <= 0)
+    return (
+      <span className="insignia insignia-retirado">
+        <span aria-hidden="true">–</span> Sin costo en el periodo
+      </span>
+    );
   return (
     <span className="insignia insignia-sin_datos">
       <span aria-hidden="true">?</span> Sin datos suficientes

@@ -149,6 +149,8 @@ export type Evidencia = {
   valor_esperado: number | null;
   metodo: string;
   metricas_relacionadas: string[];
+  // la escribe el detector: "acumulada" si los valores son una tasa por segundo de un contador
+  clase?: "medida" | "acumulada";
 };
 
 export type EvidenciaCitada = { metrica: string; desde: string; hasta: string; observacion: string };

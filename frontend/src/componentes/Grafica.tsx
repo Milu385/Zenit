@@ -1,20 +1,16 @@
 import { useEffect, useMemo, useRef } from "react";
 import uPlot from "uplot";
 import type { RespuestaSerie } from "../api";
+import { formatoValor } from "../formato";
 
 // Ocho colores categoricos en orden fijo, validados para daltonismo en modo
 // claro y oscuro. Se leen de las variables CSS --serie-1..8 para que el tema
 // los cambie en un solo lugar.
 const MAXIMO = 8;
 
-export function formatearValor(metrica: string, v: number | null | undefined): string {
-  if (v == null || Number.isNaN(v)) return "sin dato";
-  if (metrica.endsWith("_utilization")) return `${(v * 100).toFixed(1)} %`;
-  const abs = Math.abs(v);
-  if (abs >= 1e9) return `${(v / 1e9).toFixed(2)} G`;
-  if (abs >= 1e6) return `${(v / 1e6).toFixed(2)} M`;
-  if (abs >= 1e3) return `${(v / 1e3).toFixed(2)} k`;
-  return Number.isInteger(v) ? String(v) : v.toFixed(3);
+// tasa: la serie ya viene convertida a tasa por segundo (VistaSerie, metricas acumuladas)
+export function formatearValor(metrica: string, v: number | null | undefined, tasa = false): string {
+  return formatoValor(metrica, v, tasa ? "acumulada" : "medida");
 }
 
 export function nombreSerie(etiquetas: Record<string, string>, metrica: string): string {
@@ -51,7 +47,9 @@ export function alinear(r: RespuestaSerie): uPlot.AlignedData {
 }
 
 /** Etiquetas del eje y con los decimales que pide la separacion entre marcas. */
-function etiquetasY(metrica: string, vals: number[]): string[] {
+function etiquetasY(metrica: string, vals: number[], tasa: boolean): string[] {
+  // con unidad propia (bytes, op/s, llamadas/s) cada marca lleva la suya
+  if (tasa || /_(io|usage|operations|calls)$/.test(metrica)) return vals.map((v) => formatearValor(metrica, v, tasa));
   const pct = metrica.endsWith("_utilization");
   const escala = pct ? 0.01 : (() => {
     const max = Math.max(...vals.map(Math.abs));
@@ -76,7 +74,7 @@ function variable(el: HTMLElement, nombre: string): string {
   return getComputedStyle(el).getPropertyValue(nombre).trim();
 }
 
-function tooltip(raiz: HTMLElement, metrica: string, nombres: string[]): uPlot.Plugin {
+function tooltip(raiz: HTMLElement, metrica: string, nombres: string[], tasa: boolean): uPlot.Plugin {
   const caja = document.createElement("div");
   caja.className = "tooltip";
   caja.hidden = true;
@@ -103,7 +101,7 @@ function tooltip(raiz: HTMLElement, metrica: string, nombres: string[]): uPlot.P
           clave.className = "tooltip-clave";
           clave.style.background = variable(raiz, `--serie-${s + 1}`);
           const valor = document.createElement("strong");
-          valor.textContent = formatearValor(metrica, u.data[s + 1][i] as number | null);
+          valor.textContent = formatearValor(metrica, u.data[s + 1][i] as number | null, tasa);
           const etiqueta = document.createElement("span");
           etiqueta.className = "tooltip-etiqueta";
           etiqueta.textContent = nombre;
@@ -120,7 +118,15 @@ function tooltip(raiz: HTMLElement, metrica: string, nombres: string[]): uPlot.P
   };
 }
 
-export default function Grafica({ respuesta, refrescando }: { respuesta: RespuestaSerie; refrescando: boolean }) {
+export default function Grafica({
+  respuesta,
+  refrescando,
+  tasa = false,
+}: {
+  respuesta: RespuestaSerie;
+  refrescando: boolean;
+  tasa?: boolean;
+}) {
   const contenedor = useRef<HTMLDivElement>(null);
   const grafica = useRef<uPlot | null>(null);
   const datos = useMemo(() => alinear(respuesta), [respuesta]);
@@ -130,7 +136,7 @@ export default function Grafica({ respuesta, refrescando }: { respuesta: Respues
   );
   // La grafica se rehace solo si cambia la forma (metrica o lineas). Un
   // refresco con los mismos nombres actualiza los datos y conserva el cuadro.
-  const forma = `${respuesta.metrica}|${nombres.join("|")}`;
+  const forma = `${respuesta.metrica}|${tasa}|${nombres.join("|")}`;
 
   useEffect(() => {
     const el = contenedor.current;
@@ -158,7 +164,7 @@ export default function Grafica({ respuesta, refrescando }: { respuesta: Respues
             grid: { stroke: rejilla, width: 1 },
             ticks: { show: false },
             size: 70,
-            values: (_u, vals) => etiquetasY(respuesta.metrica, vals),
+            values: (_u, vals) => etiquetasY(respuesta.metrica, vals, tasa),
           },
         ],
         series: [
@@ -171,7 +177,7 @@ export default function Grafica({ respuesta, refrescando }: { respuesta: Respues
             points: { show: false },
           })),
         ],
-        plugins: [tooltip(el, respuesta.metrica, nombres)],
+        plugins: [tooltip(el, respuesta.metrica, nombres, tasa)],
       };
       grafica.current = new uPlot(opciones, datos, el);
     };
