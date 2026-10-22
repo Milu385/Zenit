@@ -364,6 +364,24 @@ def crear_app(
             raise HTTPException(404, detail=f"no existe el incidente {id_incidente}")
         return d
 
+    @app.get("/api/diagnostico/consumo", tags=["diagnostico"])
+    @requiere("diagnostico:consumo")
+    def consumo_diagnostico(desde: Optional[date] = None, hasta: Optional[date] = None):
+        """Diagnosticos y tokens por dia (UTC) y por modelo, con la version
+        configurada (H-042). Sin fechas, los ultimos 30 dias. Fuera del contrato."""
+        from zenit.diagnostico import SinConfiguracion, consumo, modelo_configurado
+
+        try:
+            inicio, fin = consumo.periodo(desde, hasta)
+        except ValueError as e:
+            raise HTTPException(422, detail=str(e))
+        try:
+            configurado = modelo_configurado()
+        except SinConfiguracion:
+            configurado = None
+        filas = _pg(lambda c: consumo.leer(c, inicio, fin)) if pg_url else []
+        return consumo.resumir(filas, inicio, fin, configurado)
+
     @app.post("/api/incidentes/{id_incidente}/estado", tags=["incidentes"])
     @requiere("incidentes:gestionar")
     def marcar_incidente(id_incidente: int, datos: PeticionEstado, request: Request):

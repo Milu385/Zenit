@@ -1,4 +1,5 @@
 import { useState } from "react";
+import ConsumoDiagnostico from "../componentes/ConsumoDiagnostico";
 import { api } from "../api";
 import { SinDatos } from "../componentes/Estados";
 import Marco from "../componentes/Marco";
@@ -6,6 +7,7 @@ import SegunCarga from "../componentes/SegunCarga";
 import type { Descubrimientos, EjecucionDescubrimiento, EstadoFuente, Fuente, Huerfana, Senal } from "../contrato";
 import { Enlace } from "../enrutador";
 import { datosProveedor, duracion, ESTADO_ACTIVO, fechaHora, hace } from "../formato";
+import { useSesion } from "../sesion";
 import { useCarga, type ResultadoCarga } from "../useCarga";
 
 // Pantalla 7 (H-053), solo para quien tiene fuentes:ver (administrador).
@@ -257,6 +259,7 @@ function Cifras({ fuentes, huerfanas, d }: { fuentes: Fuente[] | null; huerfanas
 }
 
 export default function Fuentes() {
+  const { puede } = useSesion();
   const f = useCarga((s) => api.fuentes(s), [], REFRESCO_MS);
   const h = useCarga((s) => api.huerfanas(s), [], REFRESCO_MS);
   const d = useCarga((s) => api.descubrimientos(s), [], REFRESCO_MS);
@@ -272,6 +275,7 @@ export default function Fuentes() {
       <SegunCarga r={d} que="el descubrimiento">
         {(x) => <TablaDescubrimiento d={x} />}
       </SegunCarga>
+      {puede("diagnostico:consumo") && <ConsumoDiagnostico />}
     </Marco>
   );
 }
