@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, ErrorApi } from "../api";
 import { SinDatos } from "../componentes/Estados";
 import { InsigniaIncidente, InsigniaSeveridad } from "../componentes/Insignias";
@@ -29,6 +29,21 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
   const [marcando, setMarcando] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hecho, setHecho] = useState<string | null>(null);
+  // H-054: al marcar, el boton desaparece de la fila; el foco pasa al mensaje
+  // para que el teclado no lo pierda (vuelve al cuerpo de la pagina si no)
+  const aviso = useRef<HTMLDivElement>(null);
+  // despues de pintar el mensaje (useEffect, no requestAnimationFrame: este no
+  // corre con la pestana en segundo plano)
+  useEffect(() => {
+    if (hecho || error) aviso.current?.focus();
+  }, [hecho, error]);
+  const abrirConTeclado = (e: KeyboardEvent<HTMLTableRowElement>, id: number) => {
+    if (e.target !== e.currentTarget) return; // Enter sobre el boton de la fila es del boton
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      navegar(`/incidentes/${id}`);
+    }
+  };
 
   const cuenta = (f: Filtro) =>
     f === "todos"
@@ -75,7 +90,7 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
           </Enlace>
         ))}
       </nav>
-      <div aria-live="polite">
+      <div aria-live="polite" ref={aviso} tabIndex={-1} className="aviso-foco">
         {error && <p className="mensaje-error">{error}</p>}
         {hecho && <p className="mensaje-ok">{hecho}</p>}
       </div>
@@ -104,7 +119,13 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
             </thead>
             <tbody>
               {visibles.map((i) => (
-                <tr key={i.id} className={`fila-inc fila-${i.estado}`} onClick={() => navegar(`/incidentes/${i.id}`)}>
+                <tr
+                  key={i.id}
+                  className={`fila-inc fila-${i.estado}`}
+                  tabIndex={0}
+                  onClick={() => navegar(`/incidentes/${i.id}`)}
+                  onKeyDown={(e) => abrirConTeclado(e, i.id)}
+                >
                   <td>
                     <InsigniaIncidente estado={i.estado} />
                   </td>
@@ -112,7 +133,8 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
                     <InsigniaSeveridad severidad={i.severidad} />
                   </td>
                   <th scope="row">
-                    <Enlace a={`/incidentes/${i.id}`} onClick={(e) => e.stopPropagation()}>
+                    {/* la fila ya es el destino del teclado: el enlace queda para el raton y para abrir en otra pestana */}
+                    <Enlace a={`/incidentes/${i.id}`} onClick={(e) => e.stopPropagation()} tabIndex={-1}>
                       {tituloIncidente(i)}
                     </Enlace>
                   </th>
