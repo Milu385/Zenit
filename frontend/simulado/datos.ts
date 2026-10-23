@@ -20,6 +20,7 @@ import type {
   Rol,
   Span,
 } from "../src/contrato";
+import type { EvidenciaIncidente, MetricaEvidencia } from "../src/contrato"; // H-039
 import type { AnalisisCostos } from "../src/contrato"; // H-047, fuera del contrato
 
 const MIN = 60_000;
@@ -480,6 +481,53 @@ export function detalle(id: number): DetalleIncidente | null {
     version_modelo: "mad-v1 W=60 z=3.5 m=3",
     marcada_por: marca?.marcada_por ?? null,
     marcada_en: marca?.marcada_en ?? null,
+  };
+}
+
+// GET /api/incidentes/{id}/evidencia (H-039). El 36 (disco) no tiene registros
+// ni trazas con error: es el caso vacio. El 40 simula que ClickHouse no respondio.
+export function evidenciaIncidente(id: number): EvidenciaIncidente | null {
+  const b = INCIDENTES_BASE.find((x) => x.id === id);
+  if (!b) return null;
+  const { inicio, fin } = ventanaDe(b);
+  const ev = b.evidencia(inicio, fin);
+  const desdeReg = new Date(new Date(inicio).getTime() - 10 * MIN);
+  const hastaReg = new Date(fin);
+  const resumen = (antes: number, max: number) => ({
+    antes_mediana: antes,
+    durante_mediana: (antes + max) / 2,
+    durante_min: antes,
+    durante_max: max,
+    cambio_absoluto: max - antes,
+    cambio_relativo: antes ? (max - antes) / antes : null,
+  });
+  const clase = ev.clase ?? null;
+  const metricas: MetricaEvidencia[] = [
+    { metrica: b.metrica, dimensiones: b.dimensiones, papel: "afectada", clase, unidad: clase === "acumulada" ? "por segundo" : null,
+      resumen: resumen(ev.valor_esperado ?? 0, ev.valor_observado ?? 0) },
+    ...ev.metricas_relacionadas.map((m, k): MetricaEvidencia => ({
+      metrica: m, dimensiones: m === "system_cpu_utilization" ? { state: "wait" } : {}, papel: "relacionada",
+      clase: "medida", unidad: null, resumen: resumen(k ? 0.4 : 0, k ? 0.42 : 0.031) })),
+  ];
+  const sinAnalitico = id === 40;
+  const vacio = id === 36;
+  const registros = sinAnalitico || vacio ? [] : registrosDe(b.activo, desdeReg, hastaReg, 17, null);
+  const trazas = sinAnalitico || vacio ? [] : trazasDe(b.activo, desdeReg, hastaReg, true);
+  return {
+    incidente: id,
+    activo: b.activo,
+    metrica: b.metrica,
+    dimensiones: b.dimensiones,
+    recuperada: new Date().toISOString(),
+    ventana: { desde: new Date(new Date(inicio).getTime() - 60 * MIN).toISOString(), hasta: fin },
+    ventana_registros: { desde: desdeReg.toISOString(), hasta: hastaReg.toISOString() },
+    metricas,
+    metricas_relacionadas: ev.metricas_relacionadas,
+    registros_error: registros,
+    trazas_error: trazas,
+    correlacion: [],
+    conteos: sinAnalitico ? null : { registros: registros.length * 40 + 120, registros_error: registros.length, spans: 900, spans_error: trazas.length * 2 },
+    faltantes: sinAnalitico ? ["registros y trazas: ClickHouse no respondio (simulado)"] : [],
   };
 }
 

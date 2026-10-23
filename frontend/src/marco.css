@@ -372,3 +372,8 @@ button { font: inherit; }
 @media (max-width: 760px) {
   .cifras-cuatro { grid-template-columns: 1fr 1fr; }
 }
+
+/* H-039 en el detalle del incidente: metricas, registros y trazas de la ventana */
+.evidencia-senales .bloque-evidencia { margin-top: 16px; }
+.evidencia-senales h4 { margin: 0 0 6px; font-size: 16px; }
+.mensaje-una-linea { max-width: 0; width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, monospace; font-size: 13px; }
