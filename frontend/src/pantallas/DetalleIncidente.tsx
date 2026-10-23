@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, ErrorApi } from "../api";
+import EvidenciaSenales from "../componentes/EvidenciaSenales";
 import { ErrorVista } from "../componentes/Estados";
 import { InsigniaIncidente, InsigniaSeveridad } from "../componentes/Insignias";
 import Marco from "../componentes/Marco";
@@ -306,7 +307,9 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
               </li>
             ))}
           </ol>
-          <p className="nota">Registros y trazas todavia no llegan por la API (contrato v1).</p>
+          <p className="nota">
+            <a href="#titulo-ev-senales">Registros y trazas de la ventana, mas abajo ↓</a>
+          </p>
         </section>
       </div>
 
@@ -327,6 +330,8 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
           />
         </section>
       )}
+
+      <EvidenciaSenales id={d.id} />
     </>
   );
 }

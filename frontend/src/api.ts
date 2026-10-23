@@ -5,6 +5,7 @@ import type {
   AnalisisCostos,
   DetalleActivo,
   DetalleIncidente,
+  EvidenciaIncidente,
   Descubrimientos,
   Fuente,
   Diagnostico,
@@ -154,6 +155,9 @@ export const api = {
     return pedir<Incidente[]>(`/api/incidentes${q.toString() ? `?${q}` : ""}`, { senal: s });
   },
   incidente: (id: number, s?: AbortSignal) => pedir<DetalleIncidente>(`/api/incidentes/${id}`, { senal: s }),
+  // H-039: metricas, registros y trazas de la ventana; se carga aparte del incidente
+  evidenciaIncidente: (id: number, s?: AbortSignal) =>
+    pedir<EvidenciaIncidente>(`/api/incidentes/${id}/evidencia`, { senal: s }),
   // responde el incidente como queda (H-037); 409 si ya estaba cerrado o descartado
   cambiarEstado: (id: number, estado: PeticionEstado["estado"]) =>
     pedir<IncidenteMarcado>(`/api/incidentes/${id}/estado`, { metodo: "POST", ...json({ estado } satisfies PeticionEstado) }),
