@@ -86,7 +86,7 @@ def test_clasificar_cortes():
 
 
 def test_version_modelo_describe_los_parametros():
-    assert version_modelo(60, 3.5, 3) == "mad-v1 W=60 z=3.5 m=3"
+    assert version_modelo(60, 3.5, 3) == "mad-v2 W=60 z=3.5 m=3"
 
 
 # -------------------------------------------------------------- persistencia
@@ -101,7 +101,7 @@ def test_escalon_sostenido_da_una_sola_anomalia():
     evento = eventos[0]
     assert evento.severidad in ("baja", "media", "alta")
     assert evento.puntaje >= Z_CRITICO
-    assert evento.evidencia["metodo"] == "mad-v1"
+    assert evento.evidencia["metodo"] == "mad-v2"
     assert puntos[evento.indice][0] >= INICIO + 90 * MINUTO     # cae dentro del escalon
 
 
@@ -743,3 +743,26 @@ def test_una_anomalia_con_otro_inicio_si_entra_pese_al_falso_positivo(monkeypatc
     assert resumen["anomalias_abiertas"] == 1
     assert len(conexion.filas) == 2
     assert {f["estado"] for f in conexion.filas} == {"falso_positivo", "detectada"}
+
+
+# --------------------------------------------- punto 1.2: borde de la ventana
+DIA = 24 * 60
+
+
+def test_evento_al_principio_de_la_ventana_no_abre_nada():
+    """Punto 1.2: los primeros puntos de la consulta no tienen la linea base
+    completa (60 min) y no se evaluan. Con mad-v1 bastaban 5 puntos, y esto
+    abria anomalias de severidad baja con inicio de casi un dia antes."""
+    valores = _plano(DIA)
+    for i in range(20, 40):                      # un evento en el minuto 20 de las 24 h
+        valores[i] = 40.0
+    assert detectar_eventos(_serie(valores), ventana=60, persistencia=3) == []
+
+
+def test_sin_historia_completa_no_se_clasifica():
+    """El limite es exactamente la ventana: el punto 60 ya tiene 60 de
+    historia y si se evalua."""
+    valores = _plano(70)
+    valores[57:61] = [40.0] * 4                 # puntos 57 a 60: solo el 60 se evalua
+    assert detectar_eventos(_serie(valores), ventana=60, persistencia=1) != []
+    assert detectar_eventos(_serie(valores), ventana=60, persistencia=2) == []

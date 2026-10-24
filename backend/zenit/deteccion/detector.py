@@ -37,8 +37,16 @@ una *baja* de una senal no la detecta este metodo; lo cubre H-034
 (deteccion no supervisada) cuando llegue a la misma salida.
 
 version_modelo (H-036) describe el metodo y sus parametros, por ejemplo
-"mad-v1 W=60 z=3.5 m=3": W es la ventana de la linea base, z el corte
+"mad-v2 W=60 z=3.5 m=3": W es la ventana de la linea base, z el corte
 critico y m la persistencia exigida.
+
+Que cambio de mad-v1 a mad-v2 (arreglos vistos en Azure el 21 de octubre):
+
+- **Historia completa.** Un punto solo se evalua si tiene `ventana` puntos
+  de historia antes (60 minutos). Con mad-v1 bastaban 5, y los puntos del
+  principio de la ventana de consulta, con una linea base de 5 a 59
+  minutos, abrian anomalias de severidad baja con inicio de casi 24 horas
+  antes (ids 26, 27, 28, 30 y 32 en Azure).
 """
 import logging
 import statistics
@@ -67,10 +75,14 @@ VENTANA_DEFECTO = 60
 # rango hacen falta para abrir una anomalia. Uno solo (m=1) abriria con un
 # pico aislado; esto es justo lo que la guia de deteccion pide evitar.
 PERSISTENCIA_DEFECTO = 3
-# Historia minima para confiar en la linea base: con menos, un activo recien
-# llegado (o una metrica con poco historial) no genera falsos positivos por
-# falta de datos.
-HISTORIA_MINIMA = 5
+# Historia exigida: antes de evaluar un punto hace falta la ventana completa (mad-v2).
+# Con mad-v1 era 5 puntos, y el principio de cada consulta de 24 h se evaluaba
+# contra una linea base de pocos minutos: en Azure eso abria anomalias de
+# severidad baja con inicio de casi un dia antes, cada pocos minutos, porque
+# el principio de la ventana de consulta se mueve con el reloj. Con la
+# ventana completa, todos los puntos se miden contra 60 minutos de historia,
+# igual que el ultimo. El parametro `historia_minima` de `detectar_eventos`
+# es la ventana si no se dice otra cosa.
 
 # La deteccion corre sobre el resumen por minuto, no sobre el crudo de 10 s
 # (arquitectura, seccion 4). RepositorioSeries no recibe la resolucion como
@@ -216,7 +228,7 @@ def detectar_eventos(
     persistencia: int = PERSISTENCIA_DEFECTO,
     z_normal: float = Z_NORMAL,
     z_critico: float = Z_CRITICO,
-    historia_minima: int = HISTORIA_MINIMA,
+    historia_minima: Optional[int] = None,
 ) -> list:
     """Recorre una serie ordenada por tiempo `[(momento, valor), ...]` y
     devuelve un Evento por cada racha de `persistencia` puntos seguidos en
@@ -225,17 +237,25 @@ def detectar_eventos(
     Por diseno da como maximo un evento por racha, sin importar cuanto dure
     la racha despues: la prueba de la guia (serie plana con un escalon
     construido a mano) debe dar exactamente una anomalia, ni cero ni diez.
+
+    Un punto solo se clasifica si tiene `historia_minima` puntos antes, que
+    por defecto es la ventana completa (mad-v2, ver "Historia exigida" arriba). Los
+    puntos del principio de la serie no se evaluan y no pueden abrir nada.
     """
+    if historia_minima is None:
+        historia_minima = ventana
     valores = [v for _, v in puntos]
     n = len(valores)
     estados: list = [None] * n
     puntajes: list = [0.0] * n
+    bases: list = [None] * n
 
     for i in range(n):
         historia = valores[max(0, i - ventana):i]
         if len(historia) < max(2, historia_minima):
-            continue    # sin suficiente historial propio: no se clasifica
+            continue    # sin la linea base completa: no se clasifica
         baseline = calcular_baseline(historia)
+        bases[i] = baseline
         z = puntaje_z(valores[i], baseline)
         puntajes[i] = z
         estados[i] = clasificar(z, z_normal, z_critico)
@@ -246,8 +266,7 @@ def detectar_eventos(
         racha = racha + 1 if estado == "critico" else 0
         if racha != persistencia:
             continue    # solo se abre al llegar exactamente a la persistencia exigida
-        historia = valores[max(0, i - ventana):i]
-        baseline = calcular_baseline(historia)
+        baseline = bases[i]
         momento, valor = puntos[i]
         eventos.append(Evento(
             indice=i,
@@ -264,7 +283,7 @@ def detectar_eventos(
                 # desviacion ceso, en vez de recalcular una ventana que ya se
                 # habria adaptado al fallo (zenit.deteccion.cierre).
                 "linea_base": {"mediana": baseline.mediana, "escala": baseline.escala},
-                "metodo": "mad-v1",
+                "metodo": "mad-v2",
             },
         ))
     return eventos
@@ -272,7 +291,7 @@ def detectar_eventos(
 
 def version_modelo(ventana: int = VENTANA_DEFECTO, z_critico: float = Z_CRITICO,
                    persistencia: int = PERSISTENCIA_DEFECTO) -> str:
-    return f"mad-v1 W={ventana} z={z_critico} m={persistencia}"
+    return f"mad-v2 W={ventana} z={z_critico} m={persistencia}"
 
 
 # ------------------------------------------------------------------ evaluacion
@@ -334,7 +353,7 @@ def evaluar_senal(
     hallazgos = []
     for serie in respuesta.series:
         puntos = preparar(senal, [(_a_momento(t), float(v)) for t, v in serie.puntos])
-        if len(puntos) < persistencia + max(2, HISTORIA_MINIMA):
+        if len(puntos) < ventana + persistencia:
             continue
         eventos = detectar_eventos(
             puntos, ventana=ventana, persistencia=persistencia,
