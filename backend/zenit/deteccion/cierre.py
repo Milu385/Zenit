@@ -53,6 +53,15 @@ inicio de la siguiente, con inyecciones de 3 a 20 minutos:
   para que la anomalia se cierre. Ese es el mecanismo que cumple el tercer
   criterio de H-033, y no hace falta nada mas.
 
+**4. El `fin` es el primer punto normal, no el ultimo.** La anomalia termino
+cuando la serie volvio a lo normal; los 15 minutos siguientes son la
+confirmacion, no parte de la anomalia. Con el ultimo punto de la racha, cada
+anomalia parecia durar 15 minutos mas de lo real (la 29 de Azure quedo con
+fin 13:46, cuando el disco volvio a lo normal a las 13:31), y eso se veia en
+la duracion de la interfaz y en la de H-029. Si la racha normal es mas larga
+que los 15 puntos (el servicio estuvo parado un rato, por ejemplo), el `fin`
+es el primero de toda la racha seguida, sin pasar del inicio de la anomalia.
+
 **La falta de datos no es normalidad.** Si una fuente esta degradada o no
 llegaron suficientes puntos, no se cierra: no hay con que afirmar que la
 desviacion ceso. Lo mismo del lado de abrir, en el detector.
@@ -134,6 +143,7 @@ def momento_de_cierre(
     z_critico: float = 3.5,
     paso_s: int = 60,
     holgura_puntos: int = 1,
+    despues_de: Optional[datetime] = None,
 ) -> Optional[datetime]:
     """El instante en que la anomalia deja de estar abierta, o None.
 
@@ -141,10 +151,14 @@ def momento_de_cierre(
     clase de la senal (las acumuladas, convertidas a tasa). La linea base es
     la congelada al abrir.
 
-    Devuelve el momento del ultimo punto normal cuando los ultimos
-    `normalidad` puntos estan todos por debajo del corte critico. Con menos
-    puntos que los exigidos devuelve None: la ausencia de datos no es
-    normalidad.
+    Cuando los ultimos `normalidad` puntos estan todos por debajo del corte
+    critico, devuelve el momento del **primer** punto de la racha normal
+    seguida que termina en el ultimo: el instante en que la serie volvio a lo
+    normal (decision 4 del encabezado). Con menos puntos que los exigidos
+    devuelve None: la ausencia de datos no es normalidad.
+
+    `despues_de` es el inicio de la anomalia: solo cuentan los puntos
+    posteriores, porque los de antes son la normalidad de antes del fallo.
 
     Los puntos tienen que ser seguidos, ademas de suficientes. Quince puntos
     con un hueco de media hora en medio no son quince minutos de normalidad:
@@ -152,16 +166,30 @@ def momento_de_cierre(
     rato no se sabe nada. `paso_s` es la resolucion esperada (60 s) y se
     admite un intervalo de holgura por si un minuto llega tarde.
     """
+    if despues_de is not None:
+        puntos = [p for p in puntos if p[0] > despues_de]
     if len(puntos) < normalidad:
         return None
+
+    def normal(valor):
+        return (valor - mediana) / escala < z_critico
+
     ultimos = list(puntos[-normalidad:])
-    for _, valor in ultimos:
-        if (valor - mediana) / escala >= z_critico:
-            return None
+    if not all(normal(valor) for _, valor in ultimos):
+        return None
     abarca = (ultimos[-1][0] - ultimos[0][0]).total_seconds()
     if abarca > (normalidad - 1 + holgura_puntos) * paso_s:
         return None
-    return ultimos[-1][0]
+
+    # Hacia atras, mientras siga normal y sin huecos: el primer punto de la
+    # racha es cuando la serie volvio a lo normal.
+    i = len(puntos) - normalidad
+    while i > 0:
+        t_ant, v_ant = puntos[i - 1]
+        if not normal(v_ant) or (puntos[i][0] - t_ant).total_seconds() > holgura_puntos * paso_s + paso_s:
+            break
+        i -= 1
+    return puntos[i][0]
 
 
 def cerrar(conexion, anomalia_id: int, fin: datetime) -> bool:

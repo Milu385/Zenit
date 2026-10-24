@@ -495,6 +495,7 @@ class Detector:
             fin = cierre.momento_de_cierre(
                 puntos, a.mediana, a.escala,
                 normalidad=self.normalidad_para_cerrar, z_critico=self.z_critico,
+                despues_de=a.inicio,
             )
             if fin is None:
                 continue

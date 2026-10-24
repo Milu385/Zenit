@@ -572,7 +572,31 @@ def test_no_cierra_mientras_la_desviacion_sigue():
 def test_cierra_cuando_lleva_el_tiempo_exigido_en_normal():
     puntos = _serie([40.0] * 10 + [10.0] * 15)   # 15 minutos seguidos normales
     fin = momento_de_cierre(puntos, 10.0, 0.5, normalidad=15)
-    assert fin == puntos[-1][0]
+    assert fin == puntos[10][0]                  # cuando volvio a lo normal, no 15 min despues
+
+
+def test_el_fin_es_el_primer_punto_de_toda_la_racha_normal():
+    """Punto 1.4: si la racha normal es mas larga que la exigida (el servicio
+    estuvo parado, por ejemplo), el fin es cuando empezo, no 15 minutos
+    antes del final."""
+    puntos = _serie([10.0] * 20 + [40.0] * 10 + [10.0] * 40)
+    assert momento_de_cierre(puntos, 10.0, 0.5, normalidad=15) == puntos[30][0]
+
+
+def test_el_fin_no_pasa_del_inicio_de_la_anomalia():
+    """Los puntos de antes del inicio son la normalidad de antes del fallo:
+    no cuentan ni para la racha ni para el fin."""
+    puntos = _serie([10.0] * 60)                 # el fallo no se ve en esta serie
+    inicio = puntos[20][0]
+    assert momento_de_cierre(puntos, 10.0, 0.5, normalidad=15, despues_de=inicio) == puntos[21][0]
+    # con menos de 15 puntos despues del inicio no hay con que cerrar
+    assert momento_de_cierre(puntos, 10.0, 0.5, normalidad=15, despues_de=puntos[50][0]) is None
+
+
+def test_el_fin_no_cruza_un_hueco_de_datos():
+    seguidos = _serie([40.0] * 5 + [10.0] * 30)
+    con_hueco = seguidos[:10] + [(t + timedelta(minutes=30), v) for t, v in seguidos[10:]]
+    assert momento_de_cierre(con_hueco, 10.0, 0.5, normalidad=15) == con_hueco[10][0]
 
 
 def test_no_cierra_con_normalidad_mas_corta_que_la_exigida():
@@ -629,6 +653,8 @@ def test_ciclo_cierra_la_anomalia_que_volvio_a_normal(monkeypatch):
 
     assert resumen["anomalias_cerradas"] == 1
     assert conexion.cerradas and conexion.cerradas[0][1] == 7
+    # la serie es normal desde siempre: el fin es el primer punto despues del inicio
+    assert conexion.cerradas[0][0] == INICIO + MINUTO
 
 
 def test_ciclo_no_cierra_si_la_fuente_esta_degradada(monkeypatch):
