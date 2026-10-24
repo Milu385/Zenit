@@ -34,8 +34,14 @@ INICIO = datetime(2026, 10, 19, tzinfo=timezone.utc)
 MINUTO = timedelta(minutes=1)
 
 
-def _serie(valores, paso=MINUTO):
-    return [(INICIO + i * paso, v) for i, v in enumerate(valores)]
+def _serie(valores, paso=MINUTO, inicio=INICIO):
+    return [(inicio + i * paso, v) for i, v in enumerate(valores)]
+
+
+def _serie_hasta(valores, hasta, paso=MINUTO):
+    """La misma serie, pero terminando en `hasta`: como la devuelve el
+    repositorio para una consulta que acaba ahora."""
+    return _serie(valores, paso, inicio=hasta - (len(valores) - 1) * paso)
 
 
 def _plano(n, nivel=10.0, ruido=0.05, semilla=0):
@@ -279,7 +285,8 @@ TERMINALES = ("cerrada", "falso_positivo")
 def _fila(**cambios):
     """Una fila de `anomalias` con los valores que usan las pruebas."""
     f = {"id": 7, "activo": ACTIVO, "metrica": "system_memory_utilization",
-         "dimensiones": {"state": "used"}, "inicio": INICIO, "estado": "detectada",
+         "dimensiones": {"state": "used"}, "inicio": INICIO - timedelta(hours=1),
+         "estado": "detectada",
          "fin": None, "evidencia": {"clase": "medida", "linea_base": dict(LINEA_BASE)}}
     f.update(cambios)
     return f
@@ -387,9 +394,11 @@ class _FalsoRepositorio:
 
     def serie(self, activo, metrica, desde, hasta, *, agrupar=None, filtros=None):
         self.consultas.append((metrica, agrupar, filtros))
-        valores = (_plano(90) + _plano(30, nivel=40.0, semilla=1)
+        valores = (_plano(100) + _plano(20, nivel=40.0, semilla=1)
                    if metrica == self.saturada else _plano(120))
-        return _respuesta([_serie(valores)],
+        # Termina en `hasta`, como una consulta real: el escalon cae en los
+        # ultimos 20 minutos, dentro de MAX_ANTIGUEDAD.
+        return _respuesta([_serie_hasta(valores, hasta)],
                           etiquetas=[{agrupar: "x"} if agrupar else {}])
 
 
@@ -654,7 +663,7 @@ def test_ciclo_cierra_la_anomalia_que_volvio_a_normal(monkeypatch):
     assert resumen["anomalias_cerradas"] == 1
     assert conexion.cerradas and conexion.cerradas[0][1] == 7
     # la serie es normal desde siempre: el fin es el primer punto despues del inicio
-    assert conexion.cerradas[0][0] == INICIO + MINUTO
+    assert conexion.cerradas[0][0] == INICIO - timedelta(hours=1) + MINUTO
 
 
 def test_ciclo_no_cierra_si_la_fuente_esta_degradada(monkeypatch):
@@ -766,3 +775,75 @@ def test_sin_historia_completa_no_se_clasifica():
     valores[57:61] = [40.0] * 4                 # puntos 57 a 60: solo el 60 se evalua
     assert detectar_eventos(_serie(valores), ventana=60, persistencia=1) != []
     assert detectar_eventos(_serie(valores), ventana=60, persistencia=2) == []
+
+
+# --------------------------------------------------- punto 1.1: el arranque
+def _repo_dia(ahora, *, escalon_desde):
+    """Una serie de 24 h que termina en `ahora`, con un escalon de 20 min
+    que empieza `escalon_desde` minutos antes de `ahora`."""
+    class Repo(_FalsoRepositorio):
+        def serie(self, activo, metrica, desde, hasta, *, agrupar=None, filtros=None):
+            self.consultas.append((metrica, agrupar, filtros))
+            valores = _plano(DIA)
+            arranque = DIA - 1 - escalon_desde
+            for i in range(arranque, min(arranque + 20, DIA)):
+                valores[i] = 40.0
+            return _respuesta([_serie_hasta(valores, hasta)], etiquetas=[{}])
+    return Repo(["system_memory_utilization"])
+
+
+def test_al_arrancar_no_abre_lo_del_dia_anterior(monkeypatch):
+    """Punto 1.1: un evento de hace horas, con la linea base completa, no se
+    abre en el ciclo normal: si el servicio estaba arriba ya lo abrio, y si
+    no, abrirlo ahora es lo que llenaba la lista al arrancar."""
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    resumen = Detector(_repo_dia(INICIO, escalon_desde=5 * 60), "postgresql://doble").ciclo(ahora=INICIO)
+
+    assert resumen["anomalias_abiertas"] == 0
+    assert conexion.inserts == []
+
+
+def test_un_escalon_en_los_ultimos_minutos_abre_una_sola(monkeypatch):
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    detector = Detector(_repo_dia(INICIO, escalon_desde=8), "postgresql://doble")
+
+    assert detector.ciclo(ahora=INICIO)["anomalias_abiertas"] == 1
+    inicio = conexion.inserts[0][3]
+    assert INICIO - 8 * MINUTO <= inicio <= INICIO
+    # el ciclo siguiente ve la misma racha: no abre otra
+    assert detector.ciclo(ahora=INICIO)["anomalias_abiertas"] == 0
+
+
+def test_max_antiguedad_es_configurable(monkeypatch):
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    repo = _repo_dia(INICIO, escalon_desde=45)   # empezo hace 45 min (inicio a los 43)
+
+    assert Detector(repo, "postgresql://doble").ciclo(ahora=INICIO)["anomalias_abiertas"] == 0
+    assert Detector(repo, "postgresql://doble", max_antiguedad=60).ciclo(
+        ahora=INICIO)["anomalias_abiertas"] == 1
+
+
+def test_rellenar_abre_lo_de_las_24_horas(monkeypatch):
+    """`--rellenar`: la deteccion hacia atras, aparte del ciclo normal."""
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    detector = Detector(_repo_dia(INICIO, escalon_desde=5 * 60), "postgresql://doble")
+
+    assert detector.ciclo(ahora=INICIO, rellenar=True)["anomalias_abiertas"] == 1
+
+
+def test_main_rellenar_no_va_con_cada():
+    from zenit.deteccion import __main__ as principal
+
+    assert principal.principal(["--rellenar", "--cada", "60"]) == 2

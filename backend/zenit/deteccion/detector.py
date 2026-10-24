@@ -47,6 +47,9 @@ Que cambio de mad-v1 a mad-v2 (arreglos vistos en Azure el 21 de octubre):
   principio de la ventana de consulta, con una linea base de 5 a 59
   minutos, abrian anomalias de severidad baja con inicio de casi 24 horas
   antes (ids 26, 27, 28, 30 y 32 en Azure).
+
+Lo que no cambia la version, porque no cambia el metodo sino el servicio:
+`MAX_ANTIGUEDAD` (abajo) y el `fin` del cierre (`cierre.py`).
 """
 import logging
 import statistics
@@ -83,6 +86,18 @@ PERSISTENCIA_DEFECTO = 3
 # ventana completa, todos los puntos se miden contra 60 minutos de historia,
 # igual que el ultimo. El parametro `historia_minima` de `detectar_eventos`
 # es la ventana si no se dice otra cosa.
+
+# Antiguedad maxima del inicio de una anomalia para abrirla en el ciclo normal
+# (minutos). El ciclo lee 24 h de cada serie y se queda con el evento mas
+# reciente de cada una; sin este limite, el primer ciclo despues de cada
+# arranque abria de golpe todo lo del dia anterior (25 anomalias el 21 de
+# octubre en Azure, con inicios repartidos en el dia) y el cierre del minuto
+# siguiente les ponia de `fin` la hora del arranque. 30 minutos cubre de sobra
+# la persistencia (3 min) y un ciclo atrasado, y es menos que el hueco de 45
+# minutos entre inyecciones de la campana. Se cambia con la variable
+# MAX_ANTIGUEDAD o con --max-antiguedad. La deteccion hacia atras, si se
+# necesita, es `--rellenar`, que corre un ciclo sin este limite.
+MAX_ANTIGUEDAD_DEFECTO = 30
 
 # La deteccion corre sobre el resumen por minuto, no sobre el crudo de 10 s
 # (arquitectura, seccion 4). RepositorioSeries no recibe la resolucion como
@@ -399,6 +414,7 @@ class Detector:
         z_critico: float = Z_CRITICO,
         rango_consulta: timedelta = RANGO_CONSULTA,
         normalidad_para_cerrar: int = cierre.NORMALIDAD_PARA_CERRAR,
+        max_antiguedad: int = MAX_ANTIGUEDAD_DEFECTO,
     ):
         self.repositorio = repositorio
         self.pg_url = pg_url
@@ -409,17 +425,25 @@ class Detector:
         self.z_critico = z_critico
         self.rango_consulta = rango_consulta
         self.normalidad_para_cerrar = normalidad_para_cerrar
+        self.max_antiguedad = timedelta(minutes=max_antiguedad)
         self._version_modelo = version_modelo(ventana, z_critico, persistencia)
 
     # -------------------------------------------------------------- ciclo
-    def ciclo(self, ahora: Optional[datetime] = None) -> dict:
+    def ciclo(self, ahora: Optional[datetime] = None, *, rellenar: bool = False) -> dict:
         """Un ciclo: primero cierra lo que volvio a lo normal, despues abre lo
         nuevo. En ese orden, para que una serie que se recupero y volvio a
         caer en el mismo ciclo cierre su anomalia vieja antes de abrir la
         nueva, en vez de quedar bloqueada por la deduplicacion.
+
+        Solo abre anomalias cuyo inicio esta dentro de los ultimos
+        `max_antiguedad` minutos (ver MAX_ANTIGUEDAD_DEFECTO). Con
+        `rellenar=True` no hay limite: abre lo que encuentre en las 24 h, una
+        anomalia por serie como maximo (la mas reciente). Es para un uso
+        manual (`--rellenar`), no para el servicio.
         """
         ahora = ahora or datetime.now(timezone.utc)
         desde = ahora - self.rango_consulta
+        no_antes_de = None if rellenar else ahora - self.max_antiguedad
         activos = senales_leidas = anomalias_abiertas = 0
         with catalogo.conectar(self.pg_url) as conexion:
             degradados = self._degradados(conexion, ahora)
@@ -437,7 +461,8 @@ class Detector:
                     if disponibles is not None and senal.metrica not in disponibles:
                         continue    # esa metrica no llega de este activo
                     senales_leidas += 1
-                    anomalias_abiertas += self._revisar(conexion, activo, senal, desde, ahora)
+                    anomalias_abiertas += self._revisar(conexion, activo, senal, desde, ahora,
+                                                        no_antes_de)
         return {
             "activos": activos,
             "degradados": len(degradados),
@@ -534,7 +559,8 @@ class Detector:
             log.warning("no se pudieron listar las metricas de %s: %s", activo, e)
             return None
 
-    def _revisar(self, conexion, activo: str, senal: Senal, desde: datetime, hasta: datetime) -> int:
+    def _revisar(self, conexion, activo: str, senal: Senal, desde: datetime, hasta: datetime,
+                 no_antes_de: Optional[datetime] = None) -> int:
         try:
             respuesta = self.repositorio.serie(
                 activo, senal.metrica, desde, hasta,
@@ -555,6 +581,13 @@ class Detector:
             senal, respuesta, ventana=self.ventana, persistencia=self.persistencia,
             z_normal=self.z_normal, z_critico=self.z_critico,
         ):
+            if no_antes_de is not None and hallazgo.evento.momento < no_antes_de:
+                # Ya pasaron mas de `max_antiguedad` minutos desde que empezo:
+                # si el servicio estaba arriba, ya la abrio en su momento, y si
+                # no, abrirla ahora es lo que llenaba la lista al arrancar.
+                log.debug("%s en %s: evento de %s, mas viejo que %s; no se abre",
+                          senal.clave, activo, hallazgo.evento.momento, no_antes_de)
+                continue
             if self._ya_registrada(conexion, activo, senal.metrica, hallazgo.dimensiones,
                                    hallazgo.evento.momento):
                 continue    # ya esta representada: en curso, o ya marcada con este mismo inicio
