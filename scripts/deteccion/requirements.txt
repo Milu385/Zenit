@@ -1,0 +1,8 @@
+# Para los lotes de scripts/deteccion (H-034, medicion del piso): corren fuera
+# de la plataforma y no van en las dependencias del backend.
+#   pip install -r scripts/deteccion/requirements.txt
+pandas
+numpy
+scikit-learn
+pyarrow
+pytest
