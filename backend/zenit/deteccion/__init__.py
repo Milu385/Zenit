@@ -22,4 +22,40 @@ Lo que agrega este paquete sobre el cuaderno:
   varios puntos seguidos fuera de rango, nunca con un pico aislado;
 - las dimensiones y los contadores acumulados, que en el CSV venian
   resueltos y en la plataforma no (ver `senales.py`).
+
+Reentrenamiento y version (H-036, RF-DET-05)
+--------------------------------------------
+
+**Linea base (este paquete).** No hay modelo persistido que reentrenar: la
+mediana y la escala se recalculan en cada ciclo, para cada serie, sobre la
+ventana movil de los ultimos 60 minutos. El "reentrenamiento" es continuo y
+es parte del metodo. La unica linea base que se guarda es la del momento de
+abrir cada anomalia (`evidencia.linea_base`), y no es un modelo: es la
+referencia contra la que se decide el cierre (`cierre.py`).
+
+Lo que se versiona es el metodo y sus parametros, en `version_modelo`, que
+va en cada fila de `anomalias`: `mad-v2 W=60 z=3.5 m=3` (ventana, corte
+critico, persistencia; el piso relativo se agrega al final si se activa).
+Cambiar un parametro cambia la cadena, y cambiar el metodo cambia el
+prefijo: de `mad-v1` a `mad-v2` cambiaron la historia exigida y el piso de
+la escala (`detector.py`). El catalogo de senales (`senales.py`) es parte
+del metodo; un cambio que altere que series se vigilan o con que piso se
+anota en el encabezado de `detector.py` y sube el prefijo. Con eso, cada
+anomalia dice con que version se abrio, y la evaluacion (H-029) separa las
+de cada version sin adivinar por fechas.
+
+**KMeans (H-034).** Corre por lotes, fuera de la plataforma, sobre la
+exportacion de metricas de Azure (`python -m zenit.admin exportar`). Se
+entrena una vez con los datos anteriores a la ventana de evaluacion y no se
+reentrena durante ella, para que la comparacion con la linea base sea
+justa: los dos se miden sobre el mismo periodo con un modelo fijo.
+Reentrenar es volver a correr el lote sobre una exportacion nueva, y la
+version dice con que se entreno: por ejemplo `kmeans-v1 k=4
+entrenado=2026-10-16/2026-10-22`. El modelo ajustado no se guarda en el
+repositorio (igual que los `.pkl` de los cuadernos): se regenera con el
+lote y la exportacion.
+
+**En cada evaluacion.** El reporte de H-029 declara `version_modelo`, la
+ventana de tiempo evaluada, el conjunto de inyecciones (solo las
+`completada`) y la fecha de corte.
 """
