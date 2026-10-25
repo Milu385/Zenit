@@ -84,6 +84,77 @@ limite. Con los discos de las maquinas de Azure (`sda`, `sdb` y sus
 particiones) no se llega a 8, y si se llegara, `evaluar_senal` lo deja en
 los registros.
 
+Piso de la escala
+-----------------
+
+El puntaje es `z = (valor - mediana) / escala`. Cuando una serie esta casi
+plana, el MAD (y la desviacion estandar de respaldo) queda en casi nada y
+cualquier movimiento, por pequeno que sea en terminos absolutos, da un
+puntaje enorme. Visto en Kaderno: la CPU en espera paso de 0,001 a 0,01 (un
+punto porcentual) y abrio una anomalia de puntaje 191. Un punto porcentual
+de CPU en espera no es un fallo de nadie.
+
+Por eso la escala tiene un piso:
+
+    escala = max(1.4826 * MAD, piso_relativo * |mediana|, piso_escala)
+
+- **Absoluto, por senal** (`piso_escala`). Para las `*_utilization`, que son
+  fracciones de 0 a 1, es 0,01 (`PISO_FRACCION`): un punto porcentual. El
+  corte critico queda al menos 3,5 puntos porcentuales por encima de lo
+  normal, y lo de Kaderno da z = 0,9 en vez de 191. Las demas senales no
+  llevan piso absoluto: sus unidades (bytes por segundo, paginas, llamadas,
+  procesos) no tienen un "poco" comun.
+- **Relativo** (`PISO_RELATIVO` en `detector.py`), una fraccion de la
+  mediana para todas las senales. **Esta en 0**, por lo que dice la
+  medicion de abajo.
+
+Medido sobre el `data.csv` del laboratorio (DigitalOcean, 6 y 7 de octubre,
+20 inyecciones), con el detector corriendo serie por serie a 1 minuto y la
+regla de emparejamiento de H-029 (la anomalia empieza entre el inicio de la
+inyeccion y su fin mas 5 minutos). El script esta en
+`scripts/deteccion/medir_csv.py`:
+
+| Configuracion | Eventos | Dentro | Ruido | Inyecciones detectadas | `alta` dentro |
+|---|---|---|---|---|---|
+| mad-v1 (historia 5, sin piso) | 44 | 31 | 13 | 18 de 20 | 10 |
+| Historia completa, sin piso | 38 | 31 | 7 | 18 de 20 | 10 |
+| Historia completa + piso absoluto (**mad-v2**) | 37 | 30 | 7 | 18 de 20 | 10 |
+| mad-v2 + piso relativo 0,5 % o 1 % | 37 | 30 | 7 | 18 de 20 | 3 |
+| mad-v2 + piso relativo 2 % | 37 | 30 | 7 | 18 de 20 | 0 |
+| mad-v2 + piso relativo 5 % | 37 | 30 | 7 | 18 de 20 | 0 |
+
+Lo que dice:
+
+- **El ruido lo quita la historia completa, no el piso** (13 a 7). Los seis
+  falsos positivos que se van son los del arranque del CSV (00:07 del 6 de
+  octubre, uno por columna), el mismo fenomeno del borde de la ventana que
+  se vio en Azure. Los siete que quedan son de severidad baja: cinco de
+  `carga_1m` y dos de disco y paginacion a la misma hora.
+- **El piso absoluto no cambia nada en este CSV**: la CPU en espera del
+  nodo de DigitalOcean nunca estuvo casi plana en cero y luego subio, que
+  es lo que paso en Kaderno. Quita un evento de memoria (z = 4,1) que caia
+  dentro de una inyeccion de cpu, y ninguna inyeccion deja de detectarse.
+  Su efecto se ve en Azure, que es donde aparecio el problema.
+- **El piso relativo no quita ningun falso positivo y destruye la escala
+  de severidad.** La severidad es por decadas del puntaje (`detector.py`,
+  H-033), y el disco llega a `alta` justamente porque su linea base es muy
+  estrecha. Un piso relativo ensancha esa linea base: con 0,5 % el puntaje
+  maximo del disco baja de 17 096 a 924 y las inyecciones de disco gradual
+  quedan en `media`; desde 2 % no queda ninguna anomalia `alta`. Por eso
+  esta en 0.
+
+**Efecto en la severidad de las fracciones.** Con el piso de 0,01, una
+fraccion que sube toda su escala (de 0 a 1) da como maximo z = 100, que es
+`media`. La CPU y la memoria ya no pueden llegar a `alta`; en este CSV no
+llegaban (maximos de 76 y 232), pero en Azure la memoria de las 09:34 si
+llego. Es coherente con lo que dice `detector.py` de la severidad (mide lo
+extraordinaria que es la desviacion para esa serie, no el impacto), pero es
+un cambio visible en la interfaz y hay que decirlo en el informe.
+
+La version del modelo pasa a `mad-v2` con este cambio y con el de la
+historia completa (ver `detector.py`): las anomalias abiertas antes llevan
+`mad-v1` y se pueden separar en la evaluacion.
+
 De donde salen estos nombres
 ----------------------------
 
@@ -149,6 +220,10 @@ ACUMULADA = "acumulada"    # contador que solo crece: se convierte a tasa/segund
 # final (sda1, vda1, xvda1), o un numero, `p` y un numero (nvme0n1p1).
 PARTICION = r"[a-z]+\d+|.*\dp\d+"
 
+# Piso absoluto de la escala para las fracciones de 0 a 1 (`*_utilization`):
+# un punto porcentual. Ver "Piso de la escala" arriba.
+PISO_FRACCION = 0.01
+
 
 @dataclass(frozen=True)
 class Senal:
@@ -177,6 +252,9 @@ class Senal:
     # Series que no se evaluan: dimension -> expresion regular contra el
     # valor completo. Las particiones de un disco, por ejemplo (`PARTICION`).
     excluir: Mapping[str, str] = field(default_factory=dict)
+    # Piso absoluto de la escala de la linea base, en las unidades de la
+    # serie. 0 = solo el piso relativo. Ver "Piso de la escala" arriba.
+    piso_escala: float = 0.0
 
     def excluye(self, etiquetas: Mapping[str, str]) -> bool:
         """Si la serie con estas etiquetas queda fuera por `excluir`."""
@@ -199,16 +277,19 @@ SENALES = (
     # ---------------------------------------------------------------- CPU
     Senal(
         metrica="system_cpu_utilization", clase=MEDIDA, filtros={"state": "user"},
+        piso_escala=PISO_FRACCION,
         descripcion="CPU en espacio de usuario, promedio de los nucleos",
         fallas=("cpu",), equivale_a="cpu_user",
     ),
     Senal(
         metrica="system_cpu_utilization", clase=MEDIDA, filtros={"state": "system"},
+        piso_escala=PISO_FRACCION,
         descripcion="CPU en espacio de sistema, promedio de los nucleos",
         fallas=("cpu",), equivale_a="cpu_system",
     ),
     Senal(
         metrica="system_cpu_utilization", clase=MEDIDA, filtros={"state": "wait"},
+        piso_escala=PISO_FRACCION,
         descripcion="CPU esperando entrada/salida",
         fallas=("disco",), equivale_a="cpu_wait",
     ),
@@ -220,6 +301,7 @@ SENALES = (
     # ------------------------------------------------------------- memoria
     Senal(
         metrica="system_memory_utilization", clase=MEDIDA, filtros={"state": "used"},
+        piso_escala=PISO_FRACCION,
         descripcion="Memoria en uso",
         fallas=("memoria",), equivale_a="memoria_used",
     ),

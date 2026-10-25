@@ -30,6 +30,7 @@ from zenit.deteccion.senales import (
     ACUMULADA,
     MEDIDA,
     PARTICION,
+    PISO_FRACCION,
     SENALES,
     Senal,
     a_tasa,
@@ -101,6 +102,7 @@ def test_clasificar_cortes():
 
 def test_version_modelo_describe_los_parametros():
     assert version_modelo(60, 3.5, 3) == "mad-v2 W=60 z=3.5 m=3"
+    assert version_modelo(60, 3.5, 3, 0.05) == "mad-v2 W=60 z=3.5 m=3 piso=5%"
 
 
 # -------------------------------------------------------------- persistencia
@@ -670,8 +672,9 @@ def test_ciclo_cierra_la_anomalia_que_volvio_a_normal(monkeypatch):
 
     assert resumen["anomalias_cerradas"] == 1
     assert conexion.cerradas and conexion.cerradas[0][1] == 7
+    fin = conexion.cerradas[0][0]
     # la serie es normal desde siempre: el fin es el primer punto despues del inicio
-    assert conexion.cerradas[0][0] == INICIO - timedelta(hours=1) + MINUTO
+    assert fin == INICIO - timedelta(hours=1) + MINUTO
 
 
 def test_ciclo_no_cierra_si_la_fuente_esta_degradada(monkeypatch):
@@ -762,7 +765,7 @@ def test_una_anomalia_con_otro_inicio_si_entra_pese_al_falso_positivo(monkeypatc
     assert {f["estado"] for f in conexion.filas} == {"falso_positivo", "detectada"}
 
 
-# --------------------------------------------- punto 1.2: borde de la ventana
+# ------------------------------------------- punto 1.1 y 1.2: arranque y borde
 DIA = 24 * 60
 
 
@@ -785,7 +788,6 @@ def test_sin_historia_completa_no_se_clasifica():
     assert detectar_eventos(_serie(valores), ventana=60, persistencia=2) == []
 
 
-# --------------------------------------------------- punto 1.1: el arranque
 def _repo_dia(ahora, *, escalon_desde):
     """Una serie de 24 h que termina en `ahora`, con un escalon de 20 min
     que empieza `escalon_desde` minutos antes de `ahora`."""
@@ -851,7 +853,7 @@ def test_rellenar_abre_lo_de_las_24_horas(monkeypatch):
     assert detector.ciclo(ahora=INICIO, rellenar=True)["anomalias_abiertas"] == 1
 
 
-def test_main_rellenar_no_va_con_cada():
+def test_main_rellenar_no_va_con_cada(monkeypatch, capsys):
     from zenit.deteccion import __main__ as principal
 
     assert principal.principal(["--rellenar", "--cada", "60"]) == 2
@@ -887,3 +889,52 @@ def test_las_senales_de_disco_excluyen_particiones():
             assert not senal.excluye({"device": "vda"})
     # una senal sin `excluir` no excluye nada
     assert not Senal(metrica="x").excluye({"device": "sda1"})
+
+
+# --------------------------------------------- punto 1.5: piso de la escala
+def test_serie_casi_plana_en_cero_no_dispara_por_un_punto_porcentual():
+    """Lo de Kaderno: CPU en espera de 0,001 a 0,01. Sin piso, el MAD de una
+    serie casi plana en cero da puntajes de decenas o cientos; con el piso de las
+    fracciones (0,01), un punto porcentual queda lejos del corte."""
+    random.seed(7)
+    valores = [0.001 + random.uniform(-0.0002, 0.0002) for _ in range(90)] + [0.01] * 10
+
+    sin_piso = detectar_eventos(_serie(valores), ventana=60, persistencia=3, piso_relativo=0.0)
+    con_piso = detectar_eventos(_serie(valores), ventana=60, persistencia=3,
+                                piso_absoluto=PISO_FRACCION)
+
+    assert sin_piso and sin_piso[0].puntaje > 10 * Z_CRITICO     # severidad media o mas
+    assert con_piso == []
+
+
+def test_el_piso_no_tapa_un_fallo_real():
+    """Una CPU que pasa del 5 % al 90 % sigue siendo critica con el piso."""
+    valores = _plano(90, nivel=0.05, ruido=0.002) + [0.9] * 10
+    eventos = detectar_eventos(_serie(valores), ventana=60, persistencia=3,
+                               piso_absoluto=PISO_FRACCION)
+    assert len(eventos) == 1 and eventos[0].puntaje >= Z_CRITICO
+
+
+def test_piso_relativo_de_la_escala():
+    base = calcular_baseline([100.0, 100.0, 100.0, 100.0], piso_relativo=0.05)
+    assert base.escala == 5.0
+    # sin pisos es la formula de antes: serie constante, sin escala
+    assert calcular_baseline([100.0] * 4).escala is None
+    # el absoluto manda cuando la mediana es cero
+    assert calcular_baseline([0.0] * 4, piso_relativo=0.05, piso_absoluto=0.01).escala == 0.01
+
+
+def test_el_piso_queda_en_la_evidencia_y_en_la_linea_base_congelada():
+    """El cierre usa la escala congelada: tiene que ser la misma, con piso,
+    que decidio abrir."""
+    valores = _plano(90, nivel=0.05, ruido=0.0) + [0.9] * 10
+    evento = detectar_eventos(_serie(valores), ventana=60, persistencia=3,
+                              piso_absoluto=PISO_FRACCION)[0]
+    assert evento.evidencia["linea_base"]["escala"] >= PISO_FRACCION
+    assert evento.evidencia["piso"] == {"relativo": 0.0, "absoluto": PISO_FRACCION}
+
+
+def test_las_fracciones_llevan_piso_absoluto():
+    for senal in SENALES:
+        if senal.metrica.endswith("_utilization"):
+            assert senal.piso_escala == PISO_FRACCION, senal.clave
