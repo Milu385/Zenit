@@ -55,6 +55,35 @@ con `Monotonic: true` y van como ACUMULADA.
 Agregar una senal es agregar una linea a SENALES. No hay logica por metrica
 en el detector.
 
+Particiones: el mismo disco contado dos veces
+---------------------------------------------
+
+`system_disk_io` llega para el disco y para cada una de sus particiones
+(`sda` y `sda1`, `vda` y `vda1`). La particion es parte del disco, asi que
+cualquier escritura se ve en las dos series y cada evento de disco abria
+dos anomalias (visto en Azure el 21 de octubre). Para la evaluacion por
+evento de H-029 eso no cambia los aciertos, pero si duplica los falsos
+positivos.
+
+Por eso `Senal` tiene `excluir`: dimension -> expresion regular, comparada
+contra el valor completo (`re.fullmatch`). Una serie cuya etiqueta cae en
+la expresion no se evalua. Para los discos se usa `PARTICION`:
+
+- letras seguidas de un numero al final (`sda1`, `vda1`, `xvda1`, `sdb15`);
+- un numero, `p` y un numero al final (`nvme0n1p1`, `mmcblk0p1`).
+
+`sda`, `vda`, `xvda` y `nvme0n1` no caen: son discos completos. Tambien caen
+`loop0` y `md0`. Los `loop` son las imagenes montadas de snap y no son un
+disco que se pueda saturar, asi que excluirlos es correcto. `md0` seria un
+arreglo RAID completo; no hay ninguno en el laboratorio ni en Azure, y si
+apareciera habria que afinar la expresion aqui.
+
+Es un filtro despues de consultar, no antes: el repositorio devuelve como
+maximo 8 series por consulta (H-019) y las particiones cuentan para ese
+limite. Con los discos de las maquinas de Azure (`sda`, `sdb` y sus
+particiones) no se llega a 8, y si se llegara, `evaluar_senal` lo deja en
+los registros.
+
 De donde salen estos nombres
 ----------------------------
 
@@ -107,6 +136,7 @@ Es la misma limitacion que el cuaderno midio contra la verdad de referencia
 (`caida`: 0.398 de las filas en critico, contra 0.98 de las demas) y la
 razon por la que el ERS pide H-034.
 """
+import re
 from dataclasses import dataclass, field
 from typing import Mapping, Optional, Sequence
 
@@ -114,6 +144,10 @@ from typing import Mapping, Optional, Sequence
 # hay que derivarla.
 MEDIDA = "medida"          # gauge: el valor ya es el nivel (utilizacion, carga)
 ACUMULADA = "acumulada"    # contador que solo crece: se convierte a tasa/segundo
+
+# Particiones de disco (ver "Particiones" arriba): letras y un numero al
+# final (sda1, vda1, xvda1), o un numero, `p` y un numero (nvme0n1p1).
+PARTICION = r"[a-z]+\d+|.*\dp\d+"
 
 
 @dataclass(frozen=True)
@@ -140,6 +174,17 @@ class Senal:
     # Columna del CSV del cuaderno a la que corresponde, para poder seguir
     # el rastro entre el cuaderno y la plataforma.
     equivale_a: str = ""
+    # Series que no se evaluan: dimension -> expresion regular contra el
+    # valor completo. Las particiones de un disco, por ejemplo (`PARTICION`).
+    excluir: Mapping[str, str] = field(default_factory=dict)
+
+    def excluye(self, etiquetas: Mapping[str, str]) -> bool:
+        """Si la serie con estas etiquetas queda fuera por `excluir`."""
+        return any(
+            re.fullmatch(patron, str(etiquetas.get(dimension, ""))) is not None
+            for dimension, patron in self.excluir.items()
+            if dimension in etiquetas
+        )
 
     @property
     def clave(self) -> str:
@@ -204,15 +249,17 @@ SENALES = (
         descripcion="Bytes ocupados del sistema de archivos, por punto de montaje",
         fallas=("disco",), equivale_a="disco_used_frac",
     ),
+    # Sin las particiones: cada escritura se ve en el disco y en su
+    # particion, y abria dos anomalias por evento ("Particiones", arriba).
     Senal(
         metrica="system_disk_io", clase=ACUMULADA, filtros={"direction": "write"},
-        agrupar="device",
+        agrupar="device", excluir={"device": PARTICION},
         descripcion="Bytes escritos por segundo, por dispositivo",
         fallas=("disco",), equivale_a="disco_bytes_s",
     ),
     Senal(
         metrica="system_disk_io", clase=ACUMULADA, filtros={"direction": "read"},
-        agrupar="device",
+        agrupar="device", excluir={"device": PARTICION},
         descripcion="Bytes leidos por segundo, por dispositivo",
         fallas=("disco",),
     ),

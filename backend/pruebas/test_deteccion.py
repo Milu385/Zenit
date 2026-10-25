@@ -26,7 +26,15 @@ from zenit.deteccion.detector import (
     severidad,
     version_modelo,
 )
-from zenit.deteccion.senales import ACUMULADA, MEDIDA, SENALES, Senal, a_tasa, preparar
+from zenit.deteccion.senales import (
+    ACUMULADA,
+    MEDIDA,
+    PARTICION,
+    SENALES,
+    Senal,
+    a_tasa,
+    preparar,
+)
 from zenit.esquema import es_identificador
 from zenit.repositorio.contrato import Resolucion, Respuesta, Serie
 
@@ -847,3 +855,35 @@ def test_main_rellenar_no_va_con_cada():
     from zenit.deteccion import __main__ as principal
 
     assert principal.principal(["--rellenar", "--cada", "60"]) == 2
+
+
+# ------------------------------------------------- punto 1.3: particiones
+def test_particion_reconoce_las_particiones_y_no_los_discos():
+    import re
+
+    for particion in ("sda1", "vda1", "xvda1", "sdb15", "nvme0n1p1", "mmcblk0p2"):
+        assert re.fullmatch(PARTICION, particion), particion
+    for disco in ("sda", "vda", "xvda", "sdb", "nvme0n1", "dm-0"):
+        assert not re.fullmatch(PARTICION, disco), disco
+
+
+def test_disco_y_particion_abren_una_sola_anomalia():
+    """El mismo evento se ve en `sda` y en `sda1`: solo cuenta el disco."""
+    senal = next(s for s in SENALES
+                 if s.metrica == "system_disk_io" and s.filtros.get("direction") == "write")
+    saturado = _contador([100] * 90 + [400] * 30)
+    respuesta = _respuesta([saturado, saturado, saturado],
+                           etiquetas=[{"device": "sda"}, {"device": "sda1"}, {"device": "sda15"}])
+
+    hallazgos = evaluar_senal(senal, respuesta, ventana=60, persistencia=3)
+
+    assert [h.dimensiones["device"] for h in hallazgos] == ["sda"]
+
+
+def test_las_senales_de_disco_excluyen_particiones():
+    for senal in SENALES:
+        if senal.metrica == "system_disk_io":
+            assert senal.excluye({"device": "vda1"})
+            assert not senal.excluye({"device": "vda"})
+    # una senal sin `excluir` no excluye nada
+    assert not Senal(metrica="x").excluye({"device": "sda1"})

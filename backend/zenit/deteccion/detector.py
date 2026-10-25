@@ -49,7 +49,8 @@ Que cambio de mad-v1 a mad-v2 (arreglos vistos en Azure el 21 de octubre):
   antes (ids 26, 27, 28, 30 y 32 en Azure).
 
 Lo que no cambia la version, porque no cambia el metodo sino el servicio:
-`MAX_ANTIGUEDAD` (abajo) y el `fin` del cierre (`cierre.py`).
+`MAX_ANTIGUEDAD` (abajo), la exclusion de particiones (`senales.py`) y el
+`fin` del cierre (`cierre.py`).
 """
 import logging
 import statistics
@@ -355,6 +356,9 @@ def evaluar_senal(
       consulta, un limite pensado para los colores de una grafica (H-019). Lo
       que quede fuera no se vigila, y eso tiene que verse en los registros en
       vez de pasar callado.
+
+    Y una despues: las series que la senal excluye (`Senal.excluir`, las
+    particiones de un disco) no se evaluan.
     """
     if respuesta.intervalo_s != resolucion_esperada_s:
         log.warning("%s: la respuesta vino a %s s por punto, no a %s s; no se evalua "
@@ -367,6 +371,8 @@ def evaluar_senal(
 
     hallazgos = []
     for serie in respuesta.series:
+        if senal.excluye(serie.etiquetas):
+            continue    # una particion: el disco completo ya se evalua (senales.py)
         puntos = preparar(senal, [(_a_momento(t), float(v)) for t, v in serie.puntos])
         if len(puntos) < ventana + persistencia:
             continue
