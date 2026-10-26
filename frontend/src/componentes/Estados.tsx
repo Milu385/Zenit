@@ -1,10 +1,13 @@
+import cargador from "../recursos/cargador.gif";
+
 // Los cuatro estados de la vista (criterio 4 de H-007): carga, error, sin
 // datos y datos. Cada uno se distingue por texto, no solo por color.
 
 export function Cargando({ texto = "Cargando la serie..." }: { texto?: string }) {
   return (
     <div className="estado" role="status" aria-live="polite">
-      <span className="giro" aria-hidden="true" />
+      {/* el cargador animado de Maria Lucia ("disenos zenit/gifs/a2_cargador") */}
+      <img className="cargador" src={cargador} alt="" width={72} height={72} />
       <p>{texto}</p>
     </div>
   );
@@ -43,7 +46,7 @@ export function SinPermiso({ que, mensaje }: { que: string; mensaje?: string }) 
         &#128274;
       </span>
       <p className="estado-titulo">Tu rol no da acceso a {que}</p>
-      <p>{mensaje ?? "Si lo necesitas, pidele al administrador que revise tu rol."}</p>
+      <p>{mensaje ?? "Si lo necesitas, pídele al administrador que revise tu rol."}</p>
     </div>
   );
 }

@@ -18,7 +18,7 @@
   --mal: #d6341f;
   --apagado: #66655f;
   --azul-panel: #2a62d4;     /* fondo del panel azul: 5,5:1 con texto blanco */
-  --fondo: #f3f2ee;
+  --fondo: #ffffff;          /* los wireframes van sobre blanco */
   font-family: "Poppins", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -33,45 +33,50 @@ button { font: inherit; }
 
 /* ------------------------------------------------------------- marco */
 
-.marco { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; gap: 12px; padding: 12px; }
+/* Medido sobre los wireframes a 1920 px: la barra lateral deja unos 24 px al
+   borde, mide unos 300 px y tiene esquinas de 24 px; el contenido arranca
+   casi pegado a ella (6 px) y los bloques van separados por 6 px. */
+.marco { display: grid; grid-template-columns: 300px 1fr; min-height: 100vh; gap: 6px; padding: 24px 16px 16px 24px; }
 .lateral {
-  background: var(--negro); color: #fff; border-radius: 18px; padding: 24px 18px;
-  display: flex; flex-direction: column; gap: 28px; position: sticky; top: 12px; height: calc(100vh - 24px);
+  background: var(--negro); color: #fff; border-radius: 24px; padding: 32px 24px;
+  display: flex; flex-direction: column; gap: 32px; position: sticky; top: 24px; height: calc(100vh - 48px);
 }
-.lateral-logo { display: block; width: 120px; height: 120px; margin: 0 auto; background: #0d0f14; border-radius: 6px; }
+.lateral-logo { display: block; width: 170px; height: 170px; margin: 0 auto; background: #0b0d14; border-radius: 4px; }
 .lateral-logo svg { width: 100%; height: 100%; }
 .lateral nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .lateral nav a {
-  display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 999px;
-  color: #fff; text-decoration: none; font-size: 16px;
+  display: flex; align-items: center; gap: 16px; padding: 10px 20px; border-radius: 999px;
+  color: #fff; text-decoration: none; font-size: 18px;
 }
 .lateral nav a:hover { background: rgba(255, 255, 255, 0.1); }
 .lateral nav a.activa { background: #fff; color: var(--negro); font-weight: 600; }
-.lateral .icono { flex: none; }
+.lateral .icono { flex: none; width: 30px; height: 30px; object-fit: contain; }
 .lateral-usuario { margin-top: auto; border-top: 1px solid rgba(255, 255, 255, 0.3); padding-top: 18px; display: flex; gap: 12px; align-items: flex-start; }
 .lateral-usuario p { margin: 0; }
 .lateral-usuario .nombre { font-size: 15px; }
 .lateral-usuario .rol { font-size: 12px; color: #cfcfcf; }
 .lateral-usuario .boton-texto { color: var(--amarillo); padding: 4px 0; }
 
-.principal { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
-.cabecera-pagina { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; padding: 6px 8px 0; }
-.cabecera-pagina h1 { margin: 0; font-size: 30px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.01em; }
+.principal { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.cabecera-pagina { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; padding: 0 4px 6px 20px; }
+.cabecera-pagina h1 { margin: 0; font-size: 32px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.01em; line-height: 1.15; }
 .saludo { margin: 2px 0 0; color: var(--gris); font-size: 15px; }
+.saludo-fecha::before { content: "  -  "; white-space: pre; }
 .saludo::first-letter { text-transform: uppercase; }
 .indicadores { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; }
 .indicadores li {
   display: flex; align-items: center; gap: 8px; padding: 8px 16px; border: 1.5px solid #bdbcb7;
-  border-radius: 999px; background: #fff; font-size: 14px; text-transform: uppercase; color: #555;
+  border-radius: 999px; background: #fff; font-size: 15px; text-transform: uppercase; color: #555;
 }
-.indicadores .punto { width: 14px; height: 14px; border-radius: 50%; background: var(--bien); }
+.indicadores b { color: var(--tinta); font-weight: 600; }
+.indicadores .punto { width: 16px; height: 16px; border-radius: 50%; background: var(--bien); }
 .indicadores .malo .punto { background: var(--mal); }
 .indicadores .regular .punto { background: var(--regular); }
-.contenido-pagina { outline: none; display: flex; flex-direction: column; gap: 12px; }
+.contenido-pagina { outline: none; display: flex; flex-direction: column; gap: 6px; }
 
 /* ------------------------------------------------------------ paneles */
 
-.panel { border-radius: 14px; padding: 20px 22px; }
+.panel { border-radius: 10px; padding: 20px 22px; }
 .panel h2, .panel h3 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
 .panel-amarillo { background: var(--amarillo); }
 .panel-azul { background: var(--azul-panel); color: #fff; }
@@ -81,7 +86,7 @@ button { font: inherit; }
 .panel-amarillo a { color: var(--tinta); }
 .panel-amarillo .severidad, .panel-amarillo .nivel, .panel-amarillo .texto-mal { background: #fff; padding: 0 6px; border-radius: 4px; }
 .panel-amarillo :focus-visible { outline-color: var(--tinta); }
-.panel-blanco { background: #fff; }
+.panel-blanco { background: #fff; border: 1.5px solid #e2e1dc; }   /* sobre el fondo blanco necesita borde */
 .panel-azul .panel-blanco { color: var(--tinta); }
 .cuenta { display: inline-block; min-width: 1.6em; padding: 0 6px; margin-left: 6px; border-radius: 999px; background: rgba(0, 0, 0, 0.12); font-size: 0.8em; text-align: center; }
 .nota { color: var(--gris); font-size: 13px; }
@@ -102,7 +107,7 @@ button { font: inherit; }
 .mensaje-ok { color: var(--bien); font-weight: 500; margin: 4px 0; }
 
 /* estados transversales sobre el fondo de la plataforma */
-.contenido-pagina > .estado, .pantalla-completa .estado { background: #fff; border-radius: 14px; }
+.contenido-pagina > .estado, .pantalla-completa .estado { background: #fff; border-radius: 10px; border: 1.5px solid #e2e1dc; }
 .pantalla-completa { min-height: 100vh; display: grid; place-items: center; }
 .estado-icono { font-size: 28px; }
 .estado-sin-permiso .estado-titulo { color: var(--tinta); }
@@ -150,7 +155,7 @@ button { font: inherit; }
   padding: 8px 12px; font-size: 14px; border: 1.5px solid #c9c8c3; border-radius: 10px; background: #fff; min-width: 180px;
 }
 
-.grupo-estado { background: var(--amarillo); border-radius: 14px; padding: 16px 18px; }
+.grupo-estado { background: var(--amarillo); border-radius: 10px; padding: 16px 18px; }
 .grupo-degradado { background: #ffd0c4; }
 .grupo-atencion { background: #ffe1b8; }
 .grupo-sin_datos { background: #e7e6e1; }
@@ -183,7 +188,7 @@ button { font: inherit; }
 .barra-valor { text-align: right; font-variant-numeric: tabular-nums; }
 
 .resumen-hibrido { position: sticky; top: 12px; }
-.resumen-hibrido .panel-blanco { border-radius: 14px; padding: 18px; }
+.resumen-hibrido .panel-blanco { border-radius: 10px; padding: 18px; }
 .resumen-hibrido ul { list-style: none; margin: 0; padding: 0; }
 .resumen-hibrido li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1.5px solid #9a9a9a; }
 .resumen-hibrido li:last-child { border-bottom: 0; }
@@ -202,7 +207,7 @@ button { font: inherit; }
 .filtros-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { padding: 6px 14px; border-radius: 999px; background: #fff; border: 1.5px solid #c9c8c3; text-decoration: none; color: var(--tinta); font-size: 14px; }
 .chip.activo { background: var(--negro); color: #fff; border-color: var(--negro); }
-.tabla-contenedor { overflow-x: auto; background: #fff; border-radius: 14px; }
+.tabla-contenedor { overflow-x: auto; background: #fff; border-radius: 10px; }
 .panel .tabla-contenedor { background: transparent; }
 .contenido-pagina .tabla { margin-top: 0; font-size: 14px; }
 .contenido-pagina .tabla th, .contenido-pagina .tabla td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--linea); vertical-align: top; }
@@ -221,7 +226,7 @@ button { font: inherit; }
 
 /* ------------------------------------------------- detalle de incidente */
 
-.cabecera-incidente { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; background: #fff; border-radius: 14px; padding: 18px 22px; }
+.cabecera-incidente { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; background: #fff; border-radius: 10px; border: 1.5px solid #e2e1dc; padding: 18px 22px; }
 .cabecera-incidente h2 { margin: 6px 0; font-size: 24px; }
 .insignias { display: flex; gap: 8px; align-items: center; margin: 0; }
 .acciones { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -262,7 +267,7 @@ button { font: inherit; }
 .incidentes-activo { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
 
 .cifras { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.cifras li { background: var(--negro); color: #fff; border-radius: 14px; padding: 16px 20px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.cifras li { background: var(--negro); color: #fff; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .cifra { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
 .cifra-alerta .cifra { color: var(--amarillo); }
 .importar label { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; font-size: 14px; }
@@ -298,6 +303,14 @@ button { font: inherit; }
 
 /* ------------------------------------------------------------ angosto */
 
+/* en portatiles (1366 o 1440 px) la barra de 300 px le quita demasiado al contenido */
+@media (max-width: 1500px) {
+  .marco { grid-template-columns: 240px 1fr; padding: 16px 12px 12px 16px; }
+  .lateral { top: 16px; height: calc(100vh - 32px); padding: 24px 16px; border-radius: 20px; }
+  .lateral-logo { width: 130px; height: 130px; }
+  .lateral nav a { font-size: 16px; padding: 9px 16px; gap: 12px; }
+  .lateral .icono { width: 26px; height: 26px; }
+}
 @media (max-width: 1100px) {
   .rejilla-con-lateral, .rejilla-incidente { grid-template-columns: 1fr; }
   .resumen-hibrido { position: static; }
@@ -392,3 +405,6 @@ button { font: inherit; }
 .aviso-foco:focus { outline: none; }
 .aviso-foco:focus-visible { outline: 2px dashed var(--azul-oscuro); }
 .titulo-pagina:focus { outline: none; }
+
+/* cargador animado de Maria Lucia, sobre su cuadro negro como el logo */
+.cargador { width: 72px; height: 72px; border-radius: 10px; background: #050505; margin-bottom: 8px; }

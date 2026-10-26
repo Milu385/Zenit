@@ -5,17 +5,29 @@ import { Enlace, useRuta } from "../enrutador";
 import { hace } from "../formato";
 import { NOMBRE_ROL, useSesion } from "../sesion";
 import { useCarga } from "../useCarga";
-import { IconoConfiguracion, IconoCostos, IconoFuentes, IconoIncidentes, IconoInfraestructura, IconoUsuario, Logo } from "./Iconos";
+import { IconoUsuario, Logo } from "./Iconos";
+// Iconos de seccion de Maria Lucia (carpeta "disenos zenit/Iconos secciones"):
+// amarillo sobre la barra negra y negro sobre la pastilla blanca de la activa
+import configuracionesAmarillo from "../recursos/iconos/configuraciones-amarillo.png";
+import configuracionesNegro from "../recursos/iconos/configuraciones-negro.png";
+import costosAmarillo from "../recursos/iconos/costos-amarillo.png";
+import costosNegro from "../recursos/iconos/costos-negro.png";
+import fuentesAmarillo from "../recursos/iconos/fuentes-amarillo.png";
+import fuentesNegro from "../recursos/iconos/fuentes-negro.png";
+import incidentesAmarillo from "../recursos/iconos/incidentes-amarillo.png";
+import incidentesNegro from "../recursos/iconos/incidentes-negro.png";
+import infraestructuraAmarillo from "../recursos/iconos/infraestructura-amarillo.png";
+import infraestructuraNegro from "../recursos/iconos/infraestructura-negro.png";
 
 // Diseno general de los wireframes: barra lateral negra, cabecera con titulo,
 // saludo y tres indicadores, y el contenido a la derecha.
 
-const SECCIONES: { a: string; texto: string; permiso: Permiso; Icono: (p: { className?: string }) => JSX.Element }[] = [
-  { a: "/", texto: "Infraestructura", permiso: "activos:ver", Icono: IconoInfraestructura },
-  { a: "/incidentes", texto: "Incidentes", permiso: "incidentes:ver", Icono: IconoIncidentes },
-  { a: "/configuraciones", texto: "Configuracion", permiso: "configuraciones:ver", Icono: IconoConfiguracion },
-  { a: "/costos", texto: "Costos", permiso: "costos:ver", Icono: IconoCostos },
-  { a: "/fuentes", texto: "Fuentes", permiso: "fuentes:ver", Icono: IconoFuentes },
+const SECCIONES: { a: string; texto: string; permiso: Permiso; icono: [string, string] }[] = [
+  { a: "/", texto: "Infraestructura", permiso: "activos:ver", icono: [infraestructuraAmarillo, infraestructuraNegro] },
+  { a: "/incidentes", texto: "Incidentes", permiso: "incidentes:ver", icono: [incidentesAmarillo, incidentesNegro] },
+  { a: "/configuraciones", texto: "Configuración", permiso: "configuraciones:ver", icono: [configuracionesAmarillo, configuracionesNegro] },
+  { a: "/costos", texto: "Costos", permiso: "costos:ver", icono: [costosAmarillo, costosNegro] },
+  { a: "/fuentes", texto: "Fuentes", permiso: "fuentes:ver", icono: [fuentesAmarillo, fuentesNegro] },
 ];
 
 function activa(a: string, ruta: string) {
@@ -23,9 +35,11 @@ function activa(a: string, ruta: string) {
   return ruta === a || ruta.startsWith(a + "/");
 }
 
+const mayuscula = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+
 function saludo(d: Date) {
   const h = d.getHours();
-  return h < 12 ? "Buenos dias" : h < 19 ? "Buenas tardes" : "Buenas noches";
+  return h < 12 ? "Buenos días" : h < 19 ? "Buenas tardes" : "Buenas noches";
 }
 
 const REFRESCO_INDICADORES_MS = 30_000;
@@ -47,15 +61,15 @@ function Indicadores() {
     <ul className="indicadores" aria-label="Estado general">
       <li className={abiertos ? "malo" : "bueno"}>
         <span className="punto" aria-hidden="true" />
-        {abiertos} {abiertos === 1 ? "incidente abierto" : "incidentes abiertos"}
+        <b>{abiertos}</b> {abiertos === 1 ? "incidente abierto" : "incidentes abiertos"}
       </li>
       <li className={reportando < activos.length ? "regular" : "bueno"}>
         <span className="punto" aria-hidden="true" />
-        {reportando} de {activos.length} fuentes reportando
+        <b>{reportando}</b> de <b>{activos.length}</b> fuentes reportando
       </li>
       <li className={vieja ? "regular" : "bueno"}>
         <span className="punto" aria-hidden="true" />
-        Ultima recepcion {hace(ultima ?? null)}
+        Última recepción <b>{hace(ultima ?? null)}</b>
       </li>
       {r.desactualizado && <li className="regular">Indicadores sin actualizar</li>}
     </ul>
@@ -84,10 +98,10 @@ export default function Marco({ titulo, children }: { titulo: string; children: 
         </Enlace>
         <nav aria-label="Secciones">
           <ul>
-            {SECCIONES.filter((s) => puede(s.permiso)).map(({ a, texto, Icono }) => (
+            {SECCIONES.filter((s) => puede(s.permiso)).map(({ a, texto, icono }) => (
               <li key={a}>
                 <Enlace a={a} className={activa(a, ruta) ? "activa" : undefined} aria-current={activa(a, ruta) ? "page" : undefined}>
-                  <Icono className="icono" />
+                  <img className="icono" src={activa(a, ruta) ? icono[1] : icono[0]} alt="" width={30} height={30} />
                   {texto}
                 </Enlace>
               </li>
@@ -101,7 +115,7 @@ export default function Marco({ titulo, children }: { titulo: string; children: 
               <p className="nombre">{yo.usuario}</p>
               <p className="rol">{NOMBRE_ROL[yo.rol]}</p>
               <button type="button" className="boton-texto" onClick={() => void salir()}>
-                Cerrar sesion
+                Cerrar sesión
               </button>
             </div>
           </div>
@@ -115,8 +129,11 @@ export default function Marco({ titulo, children }: { titulo: string; children: 
             </h1>
             <p className="saludo">
               {saludo(ahora)}
-              {yo ? `, ${yo.usuario}` : ""} · {ahora.toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })},{" "}
-              {ahora.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}
+              {yo ? `, ${mayuscula(yo.usuario)}` : ""}
+              <span className="saludo-fecha">
+                {mayuscula(ahora.toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" }))},{" "}
+                {ahora.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", hour12: false })}
+              </span>
             </p>
           </div>
           {puede("activos:ver") && <Indicadores />}
