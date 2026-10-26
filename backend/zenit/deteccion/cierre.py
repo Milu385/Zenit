@@ -62,6 +62,21 @@ la duracion de la interfaz y en la de H-029. Si la racha normal es mas larga
 que los 15 puntos (el servicio estuvo parado un rato, por ejemplo), el `fin`
 es el primero de toda la racha seguida, sin pasar del inicio de la anomalia.
 
+**5. Al cerrar, la escala nunca baja del 5 % de la mediana.** Visto en
+Azure el 26 de octubre: una anomalia de `system_paging_usage` (bytes de swap)
+se abrio con una escala congelada de pocos KB. Cuando la inyeccion termino,
+el swap quedo 92 KB por encima de antes (0,3 %), y contra esa escala eso
+seguia siendo "critico": la anomalia no se cerraba nunca y, mientras
+siguiera abierta, la serie no podia abrir otra (deduplicacion del
+detector). Lo mismo dejo abiertas durante dias la 110 de memoria y la 42 de
+sistema de archivos con mad-v1. El piso de mad-v2 (`senales.py`) solo cubre
+las fracciones y se aplica al abrir; este se aplica al cerrar y a todas las
+senales: la serie cuenta como normal si queda a menos de 3,5 veces el 5 %
+de la mediana de antes. No cambia cuando se abre una anomalia ni su
+severidad, solo cuando se da por terminada, y no cierra un fallo
+sostenido: un disco que sigue lleno, o una memoria que sigue alta, quedan
+muy por encima de ese margen. Por eso no cambia `version_modelo`.
+
 **La falta de datos no es normalidad.** Si una fuente esta degradada o no
 llegaron suficientes puntos, no se cierra: no hay con que afirmar que la
 desviacion ceso. Lo mismo del lado de abrir, en el detector.
@@ -76,6 +91,10 @@ log = logging.getLogger("zenit.deteccion")
 # Minutos seguidos de normalidad que se exigen para cerrar. A resolucion de
 # 1 minuto, son tambien puntos.
 NORMALIDAD_PARA_CERRAR = 15
+
+# Piso de la escala al cerrar, como fraccion de la mediana congelada
+# (decision 5 del encabezado).
+PISO_RELATIVO_CIERRE = 0.05
 
 # Estados que no se tocan automaticamente: ya terminaron su ciclo. El paso a
 # `falso_positivo` es del operador (arquitectura, estados de una anomalia) y
@@ -144,6 +163,7 @@ def momento_de_cierre(
     paso_s: int = 60,
     holgura_puntos: int = 1,
     despues_de: Optional[datetime] = None,
+    piso_relativo: float = PISO_RELATIVO_CIERRE,
 ) -> Optional[datetime]:
     """El instante en que la anomalia deja de estar abierta, o None.
 
@@ -157,6 +177,8 @@ def momento_de_cierre(
     normal (decision 4 del encabezado). Con menos puntos que los exigidos
     devuelve None: la ausencia de datos no es normalidad.
 
+    La escala nunca baja de `piso_relativo` veces la mediana (decision 5).
+
     `despues_de` es el inicio de la anomalia: solo cuentan los puntos
     posteriores, porque los de antes son la normalidad de antes del fallo.
 
@@ -166,6 +188,7 @@ def momento_de_cierre(
     rato no se sabe nada. `paso_s` es la resolucion esperada (60 s) y se
     admite un intervalo de holgura por si un minuto llega tarde.
     """
+    escala = max(escala, piso_relativo * abs(mediana))
     if despues_de is not None:
         puntos = [p for p in puntos if p[0] > despues_de]
     if len(puntos) < normalidad:

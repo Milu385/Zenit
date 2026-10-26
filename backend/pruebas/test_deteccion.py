@@ -938,3 +938,33 @@ def test_las_fracciones_llevan_piso_absoluto():
     for senal in SENALES:
         if senal.metrica.endswith("_utilization"):
             assert senal.piso_escala == PISO_FRACCION, senal.clave
+
+
+# ------------------------------------------------------------------ piso al cerrar (decision 5)
+def _swap(valores, inicio=datetime(2026, 10, 26, 13, 36, tzinfo=timezone.utc)):
+    return [(inicio + timedelta(minutes=i), v) for i, v in enumerate(valores)]
+
+
+def test_cierra_cuando_vuelve_casi_igual_con_escala_diminuta():
+    # visto en Azure el 26 de octubre: swap de 27,89 MB, escala congelada de 2 KB, y al
+    # terminar la inyeccion queda 92 KB arriba (0,3 %)
+    base, escala = 27.89e6, 2e3
+    puntos = _swap([33e6] * 10 + [base + 92e3] * 20)     # durante: +5 MB
+    assert momento_de_cierre(puntos, base, escala, piso_relativo=0.0) is None      # mad-v1/v2 sin piso
+    assert momento_de_cierre(puntos, base, escala) == puntos[10][0]
+
+
+def test_el_piso_al_cerrar_no_cierra_un_fallo_sostenido():
+    # la memoria sigue 50 % por encima de lo normal: no es normalidad
+    base = 0.18
+    puntos = _swap([0.27] * 30)
+    assert momento_de_cierre(puntos, base, 0.01) is None
+    # y una subida de algo mas que 3,5 veces el 5 % tampoco cierra
+    puntos = _swap([base * 1.2] * 30)
+    assert momento_de_cierre(puntos, base, 1e-6) is None
+
+
+def test_con_mediana_cero_manda_la_escala_congelada():
+    puntos = _swap([0.0] * 20)
+    assert momento_de_cierre(puntos, 0.0, 0.5) == puntos[0][0]
+    assert momento_de_cierre(_swap([5.0] * 20), 0.0, 0.5) is None
