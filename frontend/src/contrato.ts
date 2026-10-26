@@ -22,6 +22,7 @@ export type Permiso =
   | "usuarios:gestionar"
   | "registros:ver" // (1.2)
   | "fuentes:ver" // (1.2)
+  | "diagnostico:consumo" // FUERA DEL CONTRATO (H-042)
   | "configuraciones:enviar" // FUERA DEL CONTRATO
   | "costos:importar"; // FUERA DEL CONTRATO
 
@@ -295,6 +296,14 @@ export type EjecucionDescubrimiento = {
 
 // GET /api/catalogo/descubrimientos
 export type Descubrimientos = { ultimas: EjecucionDescubrimiento[]; recientes: EjecucionDescubrimiento[] };
+
+// FUERA DEL CONTRATO (H-042): GET /api/diagnostico/consumo?desde&hasta
+export type ConsumoDiagnostico = {
+  periodo: { desde: string; hasta: string };
+  modelo_configurado: string | null; // ZENIT_MODELO_DIAGNOSTICO; null si falta
+  por_dia: { dia: string; modelo: string; diagnosticos: number; tokens_entrada: number; tokens_salida: number }[];
+  por_modelo: { modelo: string; diagnosticos: number; tokens_entrada: number; tokens_salida: number }[];
+};
 
 // --------------------------------------------------------- laboratorio (§3)
 
