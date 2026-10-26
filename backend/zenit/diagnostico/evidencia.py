@@ -150,10 +150,24 @@ def _resumen(puntos: list, inicio: datetime, fin: datetime) -> dict:
 
 
 def _submuestrear(puntos: list, maximo: int = PUNTOS_MAXIMOS) -> list:
+    """Reduce la serie a `maximo` puntos sin perder los picos.
+
+    Se parte la serie en `maximo` tramos seguidos y de cada uno queda el punto
+    mas alto, con su momento. Tomar un punto de cada tantos (lo que hacia
+    antes) podia saltarse justo el pico que abrio la anomalia: en Azure, la
+    520 (red de Kaderno) se abrio por minutos con rafagas de 10 s de unos
+    700 B/s, y la serie que vio el modelo solo tenia los valores de 373.
+    El detector solo mira subidas, asi que el maximo es lo que hay que
+    conservar. El resumen (`_resumen`) se calcula sobre la serie completa.
+    """
     if len(puntos) <= maximo:
         return puntos
     paso = len(puntos) / maximo
-    return [puntos[int(i * paso)] for i in range(maximo)]
+    salida = []
+    for i in range(maximo):
+        tramo = puntos[int(i * paso):max(int((i + 1) * paso), int(i * paso) + 1)]
+        salida.append(max(tramo, key=lambda p: p[1]))
+    return salida
 
 
 def _serie_afectada(repositorio, activo, metrica, dimensiones, v) -> dict:
