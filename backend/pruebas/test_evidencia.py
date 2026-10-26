@@ -169,6 +169,22 @@ def test_recupera_las_tres_senales():
     assert ev["metricas_relacionadas"] == evidencia.metricas_relacionadas(ANOMALIA["metrica"], ANOMALIA["dimensiones"])
 
 
+def test_submuestrear_conserva_los_picos():
+    # 402 puntos de 10 s (67 minutos) con rafagas aisladas que un punto de
+    # cada tantos se saltaria; todas tienen que llegar al modelo
+    base = [(INICIO + timedelta(seconds=10 * i), 373.0) for i in range(402)]
+    for i in (5, 61, 120, 241, 397):
+        base[i] = (base[i][0], 700.0 + i)
+    reducida = evidencia._submuestrear(base)
+    assert len(reducida) == evidencia.PUNTOS_MAXIMOS
+    assert {v for _, v in reducida if v > 373} == {700.0 + i for i in (5, 61, 120, 241, 397)}
+    # siguen en orden y con su momento original
+    assert [t for t, _ in reducida] == sorted(t for t, _ in reducida)
+    assert (base[241][0], 941.0) in reducida
+    # una serie corta no se toca
+    assert evidencia._submuestrear(base[:50]) == base[:50]
+
+
 def test_las_acumuladas_se_convierten_a_tasa():
     ev = evidencia.recuperar(ANOMALIA, FalsoRepositorio(), FalsoAnalitico(), AHORA)
     escritura = [m for m in ev["metricas"] if m["metrica"] == "system_disk_io"
