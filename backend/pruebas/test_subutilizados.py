@@ -105,3 +105,11 @@ def test_api_sin_motor_de_series_sigue_con_la_tendencia():
     assert r["uso"]["disponible"] is False
     assert r["activos"][0]["subutilizado"] is None
     assert r["tendencia"]["meses"] == ["2026-09"]
+
+
+def test_la_telemetria_huerfana_no_aparece_como_activo():
+    """sin_resolver llega en el uso por hora (la telemetria huerfana), pero no es un activo."""
+    cargos = [_cargo("a", 6, date(2026, 9, 1))]
+    r = subutilizados.analizar(cargos, {"a": OCIOSO, "sin_resolver": OCIOSO}, {}, date(2026, 9, 1), date(2026, 9, 30))
+    assert [x["activo"] for x in r["activos"]] == ["a"]
+    assert all(x["activo"] != "sin_resolver" for x in r["tendencia"]["por_activo"])

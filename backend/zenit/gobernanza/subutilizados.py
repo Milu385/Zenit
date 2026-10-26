@@ -23,12 +23,17 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
+from zenit.esquema import SIN_RESOLVER
+
 from .costos import Cargo
 
 CPU_PROMEDIO_MAX = 0.10
 CPU_PICO_MAX = 0.40
 MEMORIA_PROMEDIO_MAX = 0.40
 HORAS_MINIMAS = 24
+# La telemetria huerfana se guarda con zenit_asset_id = sin_resolver: no es un
+# activo del catalogo y no tiene costo propio, asi que no va en la tabla.
+NO_ES_ACTIVO = {SIN_RESOLVER}
 
 
 def criterio() -> dict:
@@ -97,7 +102,7 @@ def analizar(cargos: list[Cargo], uso: dict, entornos: dict, desde: date, hasta:
     meses_orden = sorted(meses)
 
     activos = []
-    for activo in sorted(set(costo) | set(uso)):
+    for activo in sorted((set(costo) | set(uso)) - NO_ES_ACTIVO):
         u = uso.get(activo, {})
         cpu, memoria = u.get("cpu", []), u.get("memoria", [])
         monto = _dinero(costo.get(activo, Decimal(0)))

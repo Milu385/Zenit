@@ -12,8 +12,14 @@ export function navegar(ruta: string, reemplazar = false) {
   window.scrollTo(0, 0);
 }
 
+/** "/fuentes/" y "/fuentes//" son "/fuentes"; "/" se queda igual. */
+export const sinBarraFinal = (ruta: string) => ruta.replace(/\/+$/, "") || "/";
+
 export function useRuta(): { ruta: string; consulta: URLSearchParams } {
-  const leer = () => ({ ruta: window.location.pathname, busqueda: window.location.search });
+  const leer = () => ({ ruta: sinBarraFinal(window.location.pathname), busqueda: window.location.search });
+  // la barra lateral y los enlaces usan la forma sin barra: la URL tambien
+  if (window.location.pathname !== sinBarraFinal(window.location.pathname))
+    window.history.replaceState(null, "", sinBarraFinal(window.location.pathname) + window.location.search + window.location.hash);
   const [actual, setActual] = useState(leer);
   useEffect(() => {
     const cambiar = () => setActual(leer());

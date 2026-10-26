@@ -115,6 +115,9 @@ Desde la pantalla de costos, con un rol que tenga `costos:importar`. Otra opció
 - **La evidencia es una lista numerada.** Primero va la que cita la hipótesis (`evidencia_citada`, con su observación). Después, la métrica que se desvió y las `metricas_relacionadas` del detector en la ventana de la anomalía. Al elegir una, se dibuja su serie con 10 min de margen a cada lado.
 - **Pedir o regenerar la hipótesis.** El botón se muestra a quien tiene `incidentes:gestionar`. Con 200 se muestra el diagnóstico al momento. Con 202 la página dice "en cola" y vuelve a pedir el incidente cada 15 s hasta que llegue.
 - **Sin "confianza".** El primer borrador la mostraba, pero el contrato no la trae.
+- **Unidades (ajustes de H-051).** `formatoValor` (`formato.ts`): las `*_utilization` como porcentaje con 2 decimales, las de bytes en KB, MB o GB, y las acumuladas (`system_disk_io`, `system_network_io`, `system_paging_operations`, `traces_span_metrics_calls`) por segundo. La gráfica y su tabla usan lo mismo.
+- **La gráfica de la evidencia abre filtrada** con las dimensiones del incidente (`filtro=device:sda1&filtro=direction:write`), solo en la métrica que se desvió y solo con las dimensiones que la métrica tiene; una casilla las quita. Las acumuladas se dibujan como tasa por segundo calculada en la interfaz; un salto negativo (contador reiniciado) se descarta.
+- **Un falso positivo no "sigue":** la duración llega hasta el fin o, si no tiene, hasta que se descartó.
 - **Cada cita lleva a su evidencia (H-051).** Debajo de la hipótesis se listan las citas con su métrica e intervalo; al pulsar una se dibuja esa serie. Si una cita no trae un intervalo legible se usa la ventana del detector y se dice.
 - **Versión del modelo sin protagonismo.** La del detector (`version_modelo`) va en letra pequeña junto al método; la del diagnóstico, al pie de la hipótesis.
 - **Quién marcó.** Si el incidente se confirmó o descartó, la cabecera dice quién y cuándo (`marcada_por`, `marcada_en`).
@@ -198,7 +201,7 @@ Preguntas abiertas:
 | `POST /api/incidentes/{id}/diagnostico` | Construida (H-040). Responde 200 con el diagnóstico en el momento; nunca 202. 502 si el proveedor del modelo falla (el incidente queda igual), 503 si falta `ZENIT_MODELO_DIAGNOSTICO`, `ANTHROPIC_API_KEY` o la redacción de H-041. El servicio `diagnosticador` genera solo los de severidad media y alta en menos de 60 s; los demás, a pedido |
 | `GET /api/laboratorio/inyecciones` | Solo en el simulador |
 | Registros y trazas como evidencia | El wireframe los pide, pero la evidencia del contrato v1 solo trae métricas. La pantalla lo dice |
-| Tendencia de costos en el tiempo y activos subutilizados (pantalla 6) | No están en el contrato |
+| Tendencia de costos en el tiempo y activos subutilizados (pantalla 6) | Construidos (H-047) con `GET /api/gobernanza/costos/analisis`, fuera del contrato (sección 3) |
 | Pantalla 8 | Fuera de este encargo. La gestión de usuarios es el script de la sección 1. La 7 (fuentes) ya está (H-053) |
 | Modo oscuro | Sin decidir |
 | `scripts/instantanea-nodo.sh` en un nodo real | Se corrió en un equipo sin Docker: su JSON pasa `leer_instantanea` y las reglas. Falta correrlo en un nodo con contenedores y enviarlo a una plataforma desplegada |

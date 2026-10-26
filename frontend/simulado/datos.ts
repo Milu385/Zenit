@@ -301,7 +301,7 @@ const INCIDENTES_BASE: IncidenteBase[] = [
     id: 40,
     activo: "activo-azure-nodo-01",
     metrica: "system_network_io",
-    dimensiones: { direction: "receive" },
+    dimensiones: { direction: "receive", device: "eth0" },
     inicio_ms: 9 * MIN,
     fin_ms: null,
     estado: "detectada",
@@ -313,6 +313,28 @@ const INCIDENTES_BASE: IncidenteBase[] = [
       valor_esperado: 812_000,
       metodo,
       metricas_relacionadas: ["system_cpu_utilization"],
+      clase: "acumulada",
+    }),
+    diagnostico: null,
+  },
+  {
+    // contador acumulado con dos dimensiones: la grafica abre filtrada y como tasa
+    id: 36,
+    activo: "activo-onprem-db-01",
+    metrica: "system_disk_io",
+    dimensiones: { device: "sda1", direction: "write" },
+    inicio_ms: 50 * MIN,
+    fin_ms: null,
+    estado: "falso_positivo",
+    severidad: "media",
+    puntaje: 4.4,
+    evidencia: (inicio, fin) => ({
+      ventana: { desde: inicio, hasta: fin },
+      valor_observado: 945_140.622,
+      valor_esperado: 120_330.5,
+      metodo,
+      metricas_relacionadas: ["system_cpu_utilization"],
+      clase: "acumulada",
     }),
     diagnostico: null,
   },
@@ -484,12 +506,15 @@ export const activos = (): Activo[] => activosDetalle().map(({ claves: _c, ...a 
 
 // ---------------------------------------------------------------- series
 
-export const METRICAS = ["system_cpu_utilization", "system_memory_utilization", "system_network_io", "system_filesystem_utilization"];
+export const METRICAS = ["system_cpu_utilization", "system_memory_utilization", "system_network_io", "system_filesystem_utilization", "system_disk_io"];
+// contadores que solo crecen, como en el agente (Sum monotonica)
+const CONTADORES = new Set(["system_network_io", "system_disk_io"]);
 export const DIMENSIONES: Record<string, Record<string, string[]>> = {
   system_cpu_utilization: { state: ["user", "system", "idle"], cpu: ["cpu0", "cpu1"] },
   system_memory_utilization: { state: ["used", "cached"] },
   system_network_io: { direction: ["receive", "transmit"], device: ["eth0"] },
   system_filesystem_utilization: { mountpoint: ["/"] },
+  system_disk_io: { device: ["sda1", "sdb"], direction: ["read", "write"] },
 };
 
 function semilla(texto: string) {
@@ -509,6 +534,7 @@ export function serie(activo: string, metrica: string, desde: Date, hasta: Date,
   const series = valores.map((v, k) => {
     const s = semilla(activo + metrica + v);
     const puntos: [number, number][] = [];
+    let acumulado = 1e9 * s;
     for (let t = Math.ceil(desde.getTime() / paso) * paso; t <= hasta.getTime(); t += paso) {
       if (t > corte) continue; // el corte se ve como hueco
       const onda = Math.sin(t / 900_000 + s * 6) * 0.08 + Math.sin(t / 97_000 + s * 3) * 0.03;
@@ -516,7 +542,10 @@ export function serie(activo: string, metrica: string, desde: Date, hasta: Date,
       // agrupado, la primera linea lleva casi todo el nivel y las demas lo que sobra
       const parte = !agrupar ? nivel : k === 0 ? nivel * 0.85 : (nivel * 0.15) / (valores.length - 1 || 1);
       let y = Math.max(0, Math.min(1, parte + onda * (k ? 0.3 : 1) + ruido));
-      if (metrica === "system_network_io") y = Math.round(y * 2_000_000);
+      if (CONTADORES.has(metrica)) {
+        acumulado += y * 900_000 * (paso / 1000); // bytes que pasan en el paso, a ~900 KB/s
+        y = Math.round(acumulado);
+      }
       puntos.push([t, y]);
     }
     return { etiquetas: agrupar ? { [agrupar]: v } : {}, puntos };

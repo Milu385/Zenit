@@ -2,7 +2,7 @@ import type { RespuestaSerie } from "../api";
 import { formatearValor, nombreSerie } from "./Grafica";
 
 // Vista en tabla: los mismos datos sin depender del color ni del cursor.
-export default function TablaSerie({ respuesta }: { respuesta: RespuestaSerie }) {
+export default function TablaSerie({ respuesta, tasa = false }: { respuesta: RespuestaSerie; tasa?: boolean }) {
   const filas = respuesta.series.map((s) => {
     const valores = s.puntos.map((p) => p[1]);
     const ultimo = s.puntos[s.puntos.length - 1];
@@ -35,11 +35,11 @@ export default function TablaSerie({ respuesta }: { respuesta: RespuestaSerie })
         {filas.map((f) => (
           <tr key={f.nombre}>
             <th scope="row">{f.nombre}</th>
-            <td>{formatearValor(m, f.ultimo)}</td>
+            <td>{formatearValor(m, f.ultimo, tasa)}</td>
             <td>{f.hora}</td>
-            <td>{formatearValor(m, f.minimo)}</td>
-            <td>{formatearValor(m, f.promedio)}</td>
-            <td>{formatearValor(m, f.maximo)}</td>
+            <td>{formatearValor(m, f.minimo, tasa)}</td>
+            <td>{formatearValor(m, f.promedio, tasa)}</td>
+            <td>{formatearValor(m, f.maximo, tasa)}</td>
             <td>{f.n}</td>
           </tr>
         ))}

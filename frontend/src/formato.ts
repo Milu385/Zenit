@@ -75,8 +75,59 @@ export const NOMBRE_METRICA: Record<string, string> = {
   system_filesystem_utilization: "Disco",
   system_network_io: "Red",
   http_server_request_duration: "Latencia",
+  system_disk_io: "E/S de disco",
+  system_paging_operations: "Paginacion",
+  system_filesystem_usage: "Uso del disco",
+  system_cpu_load_average_1m: "Carga (1 min)",
+  system_processes_count: "Procesos",
+  traces_span_metrics_calls: "Llamadas",
 };
 export const nombreMetrica = (m: string) => NOMBRE_METRICA[m] ?? m;
+
+// ------------------------------------------------------------- unidades
+// Contadores que solo crecen (Sum monotonica): se leen como tasa por segundo.
+// Es la misma lista que las senales ACUMULADA del detector (zenit/deteccion/senales.py).
+export const ACUMULADAS = new Set(["system_disk_io", "system_network_io", "system_paging_operations", "traces_span_metrics_calls"]);
+export type ClaseMetrica = "medida" | "acumulada";
+export const claseDe = (metrica: string, clase?: string | null): ClaseMetrica =>
+  clase === "acumulada" || clase === "medida" ? clase : ACUMULADAS.has(metrica) ? "acumulada" : "medida";
+
+const EN_BYTES = new Set([
+  "system_disk_io",
+  "system_network_io",
+  "system_filesystem_usage",
+  "system_memory_usage",
+  "system_paging_usage",
+]);
+const POR_SEGUNDO: Record<string, string> = {
+  system_paging_operations: "op",
+  system_disk_operations: "op",
+  traces_span_metrics_calls: "llamadas",
+};
+
+const decimal = (v: number, d = 2) => v.toLocaleString("es-CO", { minimumFractionDigits: 0, maximumFractionDigits: d });
+
+export function bytes(v: number): string {
+  const abs = Math.abs(v);
+  if (abs >= 1024 ** 3) return `${decimal(v / 1024 ** 3)} GB`;
+  if (abs >= 1024 ** 2) return `${decimal(v / 1024 ** 2)} MB`;
+  if (abs >= 1024) return `${decimal(v / 1024)} KB`;
+  return `${decimal(v, 0)} B`;
+}
+
+/**
+ * Un valor de una metrica con su unidad. Las *_utilization son fracciones y
+ * van como porcentaje con 2 decimales; las de bytes en KB, MB o GB; las
+ * acumuladas, que el detector compara como tasa, por segundo.
+ */
+export function formatoValor(metrica: string, valor: number | null | undefined, clase?: string | null): string {
+  if (valor == null || Number.isNaN(valor)) return "sin dato";
+  const tasa = claseDe(metrica, clase) === "acumulada";
+  if (metrica.endsWith("_utilization")) return `${(valor * 100).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} %`;
+  if (EN_BYTES.has(metrica)) return `${bytes(valor)}${tasa ? "/s" : ""}`;
+  if (POR_SEGUNDO[metrica]) return `${decimal(valor)} ${POR_SEGUNDO[metrica]}${tasa ? "/s" : ""}`;
+  return `${decimal(valor)}${tasa ? "/s" : ""}`;
+}
 
 export const tituloIncidente = (i: { metrica: string; dimensiones: Record<string, string> }) => {
   const dims = Object.values(i.dimensiones);
