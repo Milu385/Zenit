@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { api } from "../api";
 import type { Activo, Permiso } from "../contrato";
 import { Enlace, useRuta } from "../enrutador";
@@ -66,6 +66,12 @@ export default function Marco({ titulo, children }: { titulo: string; children: 
   const { sesion, salir, puede } = useSesion();
   const { ruta } = useRuta();
   const ahora = new Date();
+  // H-054: al cambiar de pantalla el foco va al titulo, no se queda en el
+  // cuerpo de la pagina; el lector de pantalla anuncia donde se llego
+  const titulo1 = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    titulo1.current?.focus({ preventScroll: true });
+  }, [ruta]);
   const yo = sesion.estado === "dentro" ? sesion.yo : null;
   return (
     <div className="marco">
@@ -104,7 +110,9 @@ export default function Marco({ titulo, children }: { titulo: string; children: 
       <div className="principal">
         <header className="cabecera-pagina">
           <div>
-            <h1>{titulo}</h1>
+            <h1 ref={titulo1} tabIndex={-1} className="titulo-pagina">
+              {titulo}
+            </h1>
             <p className="saludo">
               {saludo(ahora)}
               {yo ? `, ${yo.usuario}` : ""} · {ahora.toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })},{" "}
