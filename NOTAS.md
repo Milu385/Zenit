@@ -177,6 +177,8 @@ Lo que se agregó y que no estaba en `contrato-api-v1.md`. En el código va marc
 | `GET /api/gobernanza/costos/analisis?desde&hasta` (H-047, `costos:ver`) | Tendencia del gasto por mes y costo contra uso. Responde `criterio`, `activos[]` con `subutilizado` (true, false o null si faltan datos) y su `motivo`, `tendencia{meses, por_entorno, por_activo}` y `uso{desde, hasta, disponible}` |
 | Permiso `configuraciones:enviar` (administrador) | Lo tiene el token de los nodos, y el administrador para pruebas |
 | Permiso `costos:importar` (administrador, finanzas) | Quién sube facturas |
+| `GET /api/diagnostico/consumo?desde&hasta` (H-042) | Diagnósticos y tokens por día (UTC) y por modelo, más `modelo_configurado` (`ZENIT_MODELO_DIAGNOSTICO`). Sin fechas, los últimos 30 días. Se ve en la pantalla de fuentes |
+| Permiso `diagnostico:consumo` (solo administrador, H-042) | Quién ve el consumo de tokens del diagnóstico |
 | Nombres de permiso (`activos:ver`, `incidentes:gestionar`...) | El contrato solo da el ejemplo `incidentes:ver`. El resto sigue las filas de la tabla de la sección 2 |
 | `ultima_recepcion: null` | Para un activo que nunca reportó. El contrato no dice qué va ahí |
 

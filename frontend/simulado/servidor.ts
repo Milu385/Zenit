@@ -23,6 +23,7 @@ const MATRIZ: Record<Permiso, Rol[]> = {
   // (1.2)
   "registros:ver": ["administrador", "operador", "seguridad"],
   "fuentes:ver": ["administrador"],
+  "diagnostico:consumo": ["administrador"],
   // fuera de la tabla del contrato (NOTAS.md)
   "configuraciones:enviar": ["administrador"],
   "costos:importar": ["administrador", "finanzas"],
@@ -300,6 +301,14 @@ const RUTAS: Ruta[] = [
   },
 
   // ---- laboratorio
+  // ---- consumo del diagnostico (H-042)
+  {
+    metodo: "GET",
+    patron: /^\/api\/diagnostico\/consumo$/,
+    permiso: "diagnostico:consumo",
+    h: () => d.consumoDiagnostico(escenario() === "vacio"),
+  },
+
   // ---- fuentes (1.2)
   { metodo: "GET", patron: /^\/api\/fuentes$/, permiso: "fuentes:ver", h: () => (escenario() === "vacio" ? [] : d.fuentes()) },
   { metodo: "GET", patron: /^\/api\/fuentes\/huerfanas$/, permiso: "fuentes:ver", h: () => (escenario() === "vacio" ? [] : d.huerfanas()) },

@@ -28,6 +28,9 @@ MATRIZ: dict[str, frozenset[str]] = {
     "fuentes:ver": frozenset({"administrador"}),
     # Usuarios
     "usuarios:gestionar": frozenset({"administrador"}),
+    # (H-042) consumo de tokens y version del modelo de diagnostico.
+    # Fuera de la tabla del contrato; propuesto en NOTAS.md.
+    "diagnostico:consumo": frozenset({"administrador"}),
     # --- fuera de la tabla del contrato: entradas de datos de la gobernanza.
     # Se proponen al equipo (NOTAS.md); mientras tanto, solo quien ya ve el reporte.
     "configuraciones:enviar": frozenset({"administrador"}),

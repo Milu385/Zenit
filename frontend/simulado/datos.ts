@@ -21,6 +21,7 @@ import type {
   Span,
 } from "../src/contrato";
 import type { EvidenciaIncidente, MetricaEvidencia } from "../src/contrato"; // H-039
+import type { ConsumoDiagnostico } from "../src/contrato"; // H-042
 import type { AnalisisCostos } from "../src/contrato"; // H-047, fuera del contrato
 
 const MIN = 60_000;
@@ -735,6 +736,28 @@ export function costos(desde: string | null, hasta: string | null, vacio: boolea
       { activo: "activo-do-nodo-01", proveedor: "digitalocean", costo: 12.0, fuente },
     ],
     sin_asignar: 1.37,
+  };
+}
+
+// ------------------------------------------------- consumo del diagnostico
+
+export function consumoDiagnostico(vacio: boolean): ConsumoDiagnostico {
+  const dia = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+  const por_dia = vacio
+    ? []
+    : [
+        { dia: dia(2), modelo: "claude-sonnet-5-5", diagnosticos: 4, tokens_entrada: 7_210, tokens_salida: 980 },
+        { dia: dia(1), modelo: "claude-sonnet-5-5", diagnosticos: 6, tokens_entrada: 10_830, tokens_salida: 1_420 },
+        { dia: dia(0), modelo: "claude-sonnet-5-5", diagnosticos: 2, tokens_entrada: 3_600, tokens_salida: 470 },
+      ];
+  const sumar = (k: "diagnosticos" | "tokens_entrada" | "tokens_salida") => por_dia.reduce((n, x) => n + x[k], 0);
+  return {
+    periodo: { desde: dia(29), hasta: dia(0) },
+    modelo_configurado: "claude-sonnet-5-5",
+    por_dia,
+    por_modelo: por_dia.length
+      ? [{ modelo: "claude-sonnet-5-5", diagnosticos: sumar("diagnosticos"), tokens_entrada: sumar("tokens_entrada"), tokens_salida: sumar("tokens_salida") }]
+      : [],
   };
 }
 
