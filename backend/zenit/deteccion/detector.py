@@ -37,8 +37,25 @@ una *baja* de una senal no la detecta este metodo; lo cubre H-034
 (deteccion no supervisada) cuando llegue a la misma salida.
 
 version_modelo (H-036) describe el metodo y sus parametros, por ejemplo
-"mad-v1 W=60 z=3.5 m=3": W es la ventana de la linea base, z el corte
-critico y m la persistencia exigida.
+"mad-v2 W=60 z=3.5 m=3": W es la ventana de la linea base, z el corte
+critico y m la persistencia exigida. Si se activa el piso relativo de la
+escala, se agrega al final (`piso=5%`). El piso absoluto es de cada senal
+y esta en el catalogo, que es parte de la version mad-v2.
+
+Que cambio de mad-v1 a mad-v2 (arreglos vistos en Azure el 21 de octubre):
+
+- **Historia completa.** Un punto solo se evalua si tiene `ventana` puntos
+  de historia antes (60 minutos). Con mad-v1 bastaban 5, y los puntos del
+  principio de la ventana de consulta, con una linea base de 5 a 59
+  minutos, abrian anomalias de severidad baja con inicio de casi 24 horas
+  antes (ids 26, 27, 28, 30 y 32 en Azure).
+- **Piso de la escala.** `escala = max(1.4826 * MAD, piso)`, con un piso
+  absoluto por senal (0,01 en las fracciones). Ver `senales.py`, seccion
+  "Piso de la escala", con la medicion y su efecto en la severidad.
+
+Lo que no cambia la version, porque no cambia el metodo sino el servicio:
+`MAX_ANTIGUEDAD` (abajo), la exclusion de particiones (`senales.py`) y el
+`fin` del cierre (`cierre.py`).
 """
 import logging
 import statistics
@@ -67,10 +84,33 @@ VENTANA_DEFECTO = 60
 # rango hacen falta para abrir una anomalia. Uno solo (m=1) abriria con un
 # pico aislado; esto es justo lo que la guia de deteccion pide evitar.
 PERSISTENCIA_DEFECTO = 3
-# Historia minima para confiar en la linea base: con menos, un activo recien
-# llegado (o una metrica con poco historial) no genera falsos positivos por
-# falta de datos.
-HISTORIA_MINIMA = 5
+# Historia exigida: antes de evaluar un punto hace falta la ventana completa (mad-v2).
+# Con mad-v1 era 5 puntos, y el principio de cada consulta de 24 h se evaluaba
+# contra una linea base de pocos minutos: en Azure eso abria anomalias de
+# severidad baja con inicio de casi un dia antes, cada pocos minutos, porque
+# el principio de la ventana de consulta se mueve con el reloj. Con la
+# ventana completa, todos los puntos se miden contra 60 minutos de historia,
+# igual que el ultimo. El parametro `historia_minima` de `detectar_eventos`
+# es la ventana si no se dice otra cosa.
+#
+# Piso relativo de la escala, como fraccion de la mediana. Esta en 0: medido
+# sobre el data.csv no quita ningun falso positivo y, desde 0,5 %, deja sin
+# `alta` a las inyecciones de disco gradual (senales.py, "Piso de la
+# escala"). Queda como parametro para medirlo con los datos de Azure. El
+# piso que si se usa es el absoluto de cada senal (`Senal.piso_escala`).
+PISO_RELATIVO = 0.0
+
+# Antiguedad maxima del inicio de una anomalia para abrirla en el ciclo normal
+# (minutos). El ciclo lee 24 h de cada serie y se queda con el evento mas
+# reciente de cada una; sin este limite, el primer ciclo despues de cada
+# arranque abria de golpe todo lo del dia anterior (25 anomalias el 21 de
+# octubre en Azure, con inicios repartidos en el dia) y el cierre del minuto
+# siguiente les ponia de `fin` la hora del arranque. 30 minutos cubre de sobra
+# la persistencia (3 min) y un ciclo atrasado, y es menos que el hueco de 45
+# minutos entre inyecciones de la campana. Se cambia con la variable
+# MAX_ANTIGUEDAD o con --max-antiguedad. La deteccion hacia atras, si se
+# necesita, es `--rellenar`, que corre un ciclo sin este limite.
+MAX_ANTIGUEDAD_DEFECTO = 30
 
 # La deteccion corre sobre el resumen por minuto, no sobre el crudo de 10 s
 # (arquitectura, seccion 4). RepositorioSeries no recibe la resolucion como
@@ -100,7 +140,8 @@ class Baseline:
     escala: Optional[float]      # None si la ventana es demasiado plana
 
 
-def calcular_baseline(valores: Sequence[float]) -> Baseline:
+def calcular_baseline(valores: Sequence[float], piso_relativo: float = 0.0,
+                      piso_absoluto: float = 0.0) -> Baseline:
     """Linea base de una ventana: mediana y MAD reescalado, con respaldo en
     la desviacion estandar cuando el MAD es cero (senal casi constante).
 
@@ -108,12 +149,17 @@ def calcular_baseline(valores: Sequence[float]) -> Baseline:
     criticidad`, adaptada a una sola serie a la vez (aqui la deteccion ya
     esta separada por activo, metrica y dimensiones; agrupar por activo, como
     hace el cuaderno, es responsabilidad de quien llama).
+
+    Lo que agrega mad-v2: la escala nunca baja de
+    `max(piso_relativo * |mediana|, piso_absoluto)`. Con los dos en 0 es la
+    formula de mad-v1. El motivo esta en senales.py, "Piso de la escala".
     """
     mediana = statistics.median(valores)
     mad = statistics.median(abs(v - mediana) for v in valores) * 1.4826
     desviacion = statistics.pstdev(valores) if len(valores) > 1 else 0.0
     escala = mad if mad > 0 else desviacion
-    return Baseline(mediana=mediana, escala=escala if escala and escala > 0 else None)
+    escala = max(escala or 0.0, piso_relativo * abs(mediana), piso_absoluto)
+    return Baseline(mediana=mediana, escala=escala if escala > 0 else None)
 
 
 def puntaje_z(valor: float, baseline: Baseline) -> float:
@@ -216,7 +262,9 @@ def detectar_eventos(
     persistencia: int = PERSISTENCIA_DEFECTO,
     z_normal: float = Z_NORMAL,
     z_critico: float = Z_CRITICO,
-    historia_minima: int = HISTORIA_MINIMA,
+    historia_minima: Optional[int] = None,
+    piso_relativo: float = PISO_RELATIVO,
+    piso_absoluto: float = 0.0,
 ) -> list:
     """Recorre una serie ordenada por tiempo `[(momento, valor), ...]` y
     devuelve un Evento por cada racha de `persistencia` puntos seguidos en
@@ -225,17 +273,25 @@ def detectar_eventos(
     Por diseno da como maximo un evento por racha, sin importar cuanto dure
     la racha despues: la prueba de la guia (serie plana con un escalon
     construido a mano) debe dar exactamente una anomalia, ni cero ni diez.
+
+    Un punto solo se clasifica si tiene `historia_minima` puntos antes, que
+    por defecto es la ventana completa (mad-v2, ver "Historia exigida" arriba). Los
+    puntos del principio de la serie no se evaluan y no pueden abrir nada.
     """
+    if historia_minima is None:
+        historia_minima = ventana
     valores = [v for _, v in puntos]
     n = len(valores)
     estados: list = [None] * n
     puntajes: list = [0.0] * n
+    bases: list = [None] * n
 
     for i in range(n):
         historia = valores[max(0, i - ventana):i]
         if len(historia) < max(2, historia_minima):
-            continue    # sin suficiente historial propio: no se clasifica
-        baseline = calcular_baseline(historia)
+            continue    # sin la linea base completa: no se clasifica
+        baseline = calcular_baseline(historia, piso_relativo, piso_absoluto)
+        bases[i] = baseline
         z = puntaje_z(valores[i], baseline)
         puntajes[i] = z
         estados[i] = clasificar(z, z_normal, z_critico)
@@ -246,8 +302,7 @@ def detectar_eventos(
         racha = racha + 1 if estado == "critico" else 0
         if racha != persistencia:
             continue    # solo se abre al llegar exactamente a la persistencia exigida
-        historia = valores[max(0, i - ventana):i]
-        baseline = calcular_baseline(historia)
+        baseline = bases[i]
         momento, valor = puntos[i]
         eventos.append(Evento(
             indice=i,
@@ -264,15 +319,18 @@ def detectar_eventos(
                 # desviacion ceso, en vez de recalcular una ventana que ya se
                 # habria adaptado al fallo (zenit.deteccion.cierre).
                 "linea_base": {"mediana": baseline.mediana, "escala": baseline.escala},
-                "metodo": "mad-v1",
+                "piso": {"relativo": piso_relativo, "absoluto": piso_absoluto},
+                "metodo": "mad-v2",
             },
         ))
     return eventos
 
 
 def version_modelo(ventana: int = VENTANA_DEFECTO, z_critico: float = Z_CRITICO,
-                   persistencia: int = PERSISTENCIA_DEFECTO) -> str:
-    return f"mad-v1 W={ventana} z={z_critico} m={persistencia}"
+                   persistencia: int = PERSISTENCIA_DEFECTO,
+                   piso_relativo: float = PISO_RELATIVO) -> str:
+    version = f"mad-v2 W={ventana} z={z_critico} m={persistencia}"
+    return f"{version} piso={piso_relativo:.0%}" if piso_relativo else version
 
 
 # ------------------------------------------------------------------ evaluacion
@@ -303,6 +361,7 @@ def evaluar_senal(
     z_normal: float = Z_NORMAL,
     z_critico: float = Z_CRITICO,
     resolucion_esperada_s: int = RESOLUCION_ESPERADA_S,
+    piso_relativo: float = PISO_RELATIVO,
 ) -> list:
     """Evalua una Respuesta del repositorio y devuelve los hallazgos.
 
@@ -321,6 +380,9 @@ def evaluar_senal(
       consulta, un limite pensado para los colores de una grafica (H-019). Lo
       que quede fuera no se vigila, y eso tiene que verse en los registros en
       vez de pasar callado.
+
+    Y una despues: las series que la senal excluye (`Senal.excluir`, las
+    particiones de un disco) no se evaluan.
     """
     if respuesta.intervalo_s != resolucion_esperada_s:
         log.warning("%s: la respuesta vino a %s s por punto, no a %s s; no se evalua "
@@ -333,12 +395,15 @@ def evaluar_senal(
 
     hallazgos = []
     for serie in respuesta.series:
+        if senal.excluye(serie.etiquetas):
+            continue    # una particion: el disco completo ya se evalua (senales.py)
         puntos = preparar(senal, [(_a_momento(t), float(v)) for t, v in serie.puntos])
-        if len(puntos) < persistencia + max(2, HISTORIA_MINIMA):
+        if len(puntos) < ventana + persistencia:
             continue
         eventos = detectar_eventos(
             puntos, ventana=ventana, persistencia=persistencia,
             z_normal=z_normal, z_critico=z_critico,
+            piso_relativo=piso_relativo, piso_absoluto=senal.piso_escala,
         )
         if not eventos:
             continue
@@ -380,6 +445,8 @@ class Detector:
         z_critico: float = Z_CRITICO,
         rango_consulta: timedelta = RANGO_CONSULTA,
         normalidad_para_cerrar: int = cierre.NORMALIDAD_PARA_CERRAR,
+        max_antiguedad: int = MAX_ANTIGUEDAD_DEFECTO,
+        piso_relativo: float = PISO_RELATIVO,
     ):
         self.repositorio = repositorio
         self.pg_url = pg_url
@@ -390,17 +457,26 @@ class Detector:
         self.z_critico = z_critico
         self.rango_consulta = rango_consulta
         self.normalidad_para_cerrar = normalidad_para_cerrar
-        self._version_modelo = version_modelo(ventana, z_critico, persistencia)
+        self.max_antiguedad = timedelta(minutes=max_antiguedad)
+        self.piso_relativo = piso_relativo
+        self._version_modelo = version_modelo(ventana, z_critico, persistencia, piso_relativo)
 
     # -------------------------------------------------------------- ciclo
-    def ciclo(self, ahora: Optional[datetime] = None) -> dict:
+    def ciclo(self, ahora: Optional[datetime] = None, *, rellenar: bool = False) -> dict:
         """Un ciclo: primero cierra lo que volvio a lo normal, despues abre lo
         nuevo. En ese orden, para que una serie que se recupero y volvio a
         caer en el mismo ciclo cierre su anomalia vieja antes de abrir la
         nueva, en vez de quedar bloqueada por la deduplicacion.
+
+        Solo abre anomalias cuyo inicio esta dentro de los ultimos
+        `max_antiguedad` minutos (ver MAX_ANTIGUEDAD_DEFECTO). Con
+        `rellenar=True` no hay limite: abre lo que encuentre en las 24 h, una
+        anomalia por serie como maximo (la mas reciente). Es para un uso
+        manual (`--rellenar`), no para el servicio.
         """
         ahora = ahora or datetime.now(timezone.utc)
         desde = ahora - self.rango_consulta
+        no_antes_de = None if rellenar else ahora - self.max_antiguedad
         activos = senales_leidas = anomalias_abiertas = 0
         with catalogo.conectar(self.pg_url) as conexion:
             degradados = self._degradados(conexion, ahora)
@@ -418,7 +494,8 @@ class Detector:
                     if disponibles is not None and senal.metrica not in disponibles:
                         continue    # esa metrica no llega de este activo
                     senales_leidas += 1
-                    anomalias_abiertas += self._revisar(conexion, activo, senal, desde, ahora)
+                    anomalias_abiertas += self._revisar(conexion, activo, senal, desde, ahora,
+                                                        no_antes_de)
         return {
             "activos": activos,
             "degradados": len(degradados),
@@ -495,6 +572,7 @@ class Detector:
             fin = cierre.momento_de_cierre(
                 puntos, a.mediana, a.escala,
                 normalidad=self.normalidad_para_cerrar, z_critico=self.z_critico,
+                despues_de=a.inicio,
             )
             if fin is None:
                 continue
@@ -514,7 +592,8 @@ class Detector:
             log.warning("no se pudieron listar las metricas de %s: %s", activo, e)
             return None
 
-    def _revisar(self, conexion, activo: str, senal: Senal, desde: datetime, hasta: datetime) -> int:
+    def _revisar(self, conexion, activo: str, senal: Senal, desde: datetime, hasta: datetime,
+                 no_antes_de: Optional[datetime] = None) -> int:
         try:
             respuesta = self.repositorio.serie(
                 activo, senal.metrica, desde, hasta,
@@ -533,8 +612,15 @@ class Detector:
         abiertas = 0
         for hallazgo in evaluar_senal(
             senal, respuesta, ventana=self.ventana, persistencia=self.persistencia,
-            z_normal=self.z_normal, z_critico=self.z_critico,
+            z_normal=self.z_normal, z_critico=self.z_critico, piso_relativo=self.piso_relativo,
         ):
+            if no_antes_de is not None and hallazgo.evento.momento < no_antes_de:
+                # Ya pasaron mas de `max_antiguedad` minutos desde que empezo:
+                # si el servicio estaba arriba, ya la abrio en su momento, y si
+                # no, abrirla ahora es lo que llenaba la lista al arrancar.
+                log.debug("%s en %s: evento de %s, mas viejo que %s; no se abre",
+                          senal.clave, activo, hallazgo.evento.momento, no_antes_de)
+                continue
             if self._ya_registrada(conexion, activo, senal.metrica, hallazgo.dimensiones,
                                    hallazgo.evento.momento):
                 continue    # ya esta representada: en curso, o ya marcada con este mismo inicio

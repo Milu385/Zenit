@@ -3,6 +3,14 @@
     python -m zenit.deteccion --cada 60        lo corre el servicio detector
     python -m zenit.deteccion                   un ciclo y termina
     python -m zenit.deteccion --senales         revisa el catalogo de senales, sin escribir nada
+    python -m zenit.deteccion --rellenar        un ciclo que abre tambien lo de las ultimas 24 h
+
+El ciclo normal solo abre anomalias que empezaron en los ultimos
+MAX_ANTIGUEDAD minutos (30 por defecto; variable MAX_ANTIGUEDAD o
+`--max-antiguedad`). Sin ese limite, cada arranque abria de golpe lo del dia
+anterior (ver MAX_ANTIGUEDAD_DEFECTO en detector.py). `--rellenar` es la
+deteccion hacia atras, a mano y una sola vez: abre como maximo una anomalia
+por serie, la mas reciente de las 24 h.
 
 Un ciclo fallido queda en los registros y se repite en el siguiente, igual
 que en el agregador: el servicio no se cae por un error de un activo.
@@ -19,7 +27,7 @@ import time
 from datetime import datetime, timezone
 
 from zenit import catalogo
-from zenit.deteccion.detector import Detector
+from zenit.deteccion.detector import MAX_ANTIGUEDAD_DEFECTO, Detector
 
 log = logging.getLogger("zenit.deteccion")
 
@@ -73,14 +81,23 @@ def principal(argv=None) -> int:
     p.add_argument("--cada", type=int, default=0, help="segundos entre ciclos; 0 = uno solo")
     p.add_argument("--senales", action="store_true",
                    help="revisa que senales del catalogo existen en la plataforma y sale")
+    p.add_argument("--max-antiguedad", type=int,
+                   default=int(os.environ.get("MAX_ANTIGUEDAD", MAX_ANTIGUEDAD_DEFECTO)),
+                   help="minutos: solo abre anomalias que empezaron hace menos que esto "
+                        f"(variable MAX_ANTIGUEDAD; {MAX_ANTIGUEDAD_DEFECTO} por defecto)")
+    p.add_argument("--rellenar", action="store_true",
+                   help="un solo ciclo sin limite de antiguedad: abre tambien lo de las ultimas 24 h")
     args = p.parse_args(argv)
+    if args.rellenar and args.cada:
+        print("--rellenar es un ciclo suelto, no va con --cada", file=sys.stderr)
+        return 2
 
     repositorio, url = _desde_entorno()
     if repositorio is None:
         print("faltan PG_URL o INFLUX_TOKEN", file=sys.stderr)
         return 2
     catalogo.esperar_pg(url)
-    detector = Detector(repositorio, url)
+    detector = Detector(repositorio, url, max_antiguedad=args.max_antiguedad)
 
     if args.senales:
         return _informe_senales(detector)
@@ -88,7 +105,7 @@ def principal(argv=None) -> int:
     while True:
         t0 = time.monotonic()
         try:
-            r = detector.ciclo()
+            r = detector.ciclo(rellenar=args.rellenar)
             degradados = f", {r['degradados']} con la fuente callada" if r["degradados"] else ""
             print(f"{datetime.now(timezone.utc):%H:%M:%S} {r['activos']} activos{degradados}, "
                   f"{r['senales']} senales, {r['anomalias_abiertas']} abiertas, "

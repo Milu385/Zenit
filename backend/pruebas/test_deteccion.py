@@ -26,7 +26,16 @@ from zenit.deteccion.detector import (
     severidad,
     version_modelo,
 )
-from zenit.deteccion.senales import ACUMULADA, MEDIDA, SENALES, Senal, a_tasa, preparar
+from zenit.deteccion.senales import (
+    ACUMULADA,
+    MEDIDA,
+    PARTICION,
+    PISO_FRACCION,
+    SENALES,
+    Senal,
+    a_tasa,
+    preparar,
+)
 from zenit.esquema import es_identificador
 from zenit.repositorio.contrato import Resolucion, Respuesta, Serie
 
@@ -34,8 +43,14 @@ INICIO = datetime(2026, 10, 19, tzinfo=timezone.utc)
 MINUTO = timedelta(minutes=1)
 
 
-def _serie(valores, paso=MINUTO):
-    return [(INICIO + i * paso, v) for i, v in enumerate(valores)]
+def _serie(valores, paso=MINUTO, inicio=INICIO):
+    return [(inicio + i * paso, v) for i, v in enumerate(valores)]
+
+
+def _serie_hasta(valores, hasta, paso=MINUTO):
+    """La misma serie, pero terminando en `hasta`: como la devuelve el
+    repositorio para una consulta que acaba ahora."""
+    return _serie(valores, paso, inicio=hasta - (len(valores) - 1) * paso)
 
 
 def _plano(n, nivel=10.0, ruido=0.05, semilla=0):
@@ -86,7 +101,8 @@ def test_clasificar_cortes():
 
 
 def test_version_modelo_describe_los_parametros():
-    assert version_modelo(60, 3.5, 3) == "mad-v1 W=60 z=3.5 m=3"
+    assert version_modelo(60, 3.5, 3) == "mad-v2 W=60 z=3.5 m=3"
+    assert version_modelo(60, 3.5, 3, 0.05) == "mad-v2 W=60 z=3.5 m=3 piso=5%"
 
 
 # -------------------------------------------------------------- persistencia
@@ -101,7 +117,7 @@ def test_escalon_sostenido_da_una_sola_anomalia():
     evento = eventos[0]
     assert evento.severidad in ("baja", "media", "alta")
     assert evento.puntaje >= Z_CRITICO
-    assert evento.evidencia["metodo"] == "mad-v1"
+    assert evento.evidencia["metodo"] == "mad-v2"
     assert puntos[evento.indice][0] >= INICIO + 90 * MINUTO     # cae dentro del escalon
 
 
@@ -279,7 +295,8 @@ TERMINALES = ("cerrada", "falso_positivo")
 def _fila(**cambios):
     """Una fila de `anomalias` con los valores que usan las pruebas."""
     f = {"id": 7, "activo": ACTIVO, "metrica": "system_memory_utilization",
-         "dimensiones": {"state": "used"}, "inicio": INICIO, "estado": "detectada",
+         "dimensiones": {"state": "used"}, "inicio": INICIO - timedelta(hours=1),
+         "estado": "detectada",
          "fin": None, "evidencia": {"clase": "medida", "linea_base": dict(LINEA_BASE)}}
     f.update(cambios)
     return f
@@ -387,9 +404,11 @@ class _FalsoRepositorio:
 
     def serie(self, activo, metrica, desde, hasta, *, agrupar=None, filtros=None):
         self.consultas.append((metrica, agrupar, filtros))
-        valores = (_plano(90) + _plano(30, nivel=40.0, semilla=1)
+        valores = (_plano(100) + _plano(20, nivel=40.0, semilla=1)
                    if metrica == self.saturada else _plano(120))
-        return _respuesta([_serie(valores)],
+        # Termina en `hasta`, como una consulta real: el escalon cae en los
+        # ultimos 20 minutos, dentro de MAX_ANTIGUEDAD.
+        return _respuesta([_serie_hasta(valores, hasta)],
                           etiquetas=[{agrupar: "x"} if agrupar else {}])
 
 
@@ -572,7 +591,31 @@ def test_no_cierra_mientras_la_desviacion_sigue():
 def test_cierra_cuando_lleva_el_tiempo_exigido_en_normal():
     puntos = _serie([40.0] * 10 + [10.0] * 15)   # 15 minutos seguidos normales
     fin = momento_de_cierre(puntos, 10.0, 0.5, normalidad=15)
-    assert fin == puntos[-1][0]
+    assert fin == puntos[10][0]                  # cuando volvio a lo normal, no 15 min despues
+
+
+def test_el_fin_es_el_primer_punto_de_toda_la_racha_normal():
+    """Punto 1.4: si la racha normal es mas larga que la exigida (el servicio
+    estuvo parado, por ejemplo), el fin es cuando empezo, no 15 minutos
+    antes del final."""
+    puntos = _serie([10.0] * 20 + [40.0] * 10 + [10.0] * 40)
+    assert momento_de_cierre(puntos, 10.0, 0.5, normalidad=15) == puntos[30][0]
+
+
+def test_el_fin_no_pasa_del_inicio_de_la_anomalia():
+    """Los puntos de antes del inicio son la normalidad de antes del fallo:
+    no cuentan ni para la racha ni para el fin."""
+    puntos = _serie([10.0] * 60)                 # el fallo no se ve en esta serie
+    inicio = puntos[20][0]
+    assert momento_de_cierre(puntos, 10.0, 0.5, normalidad=15, despues_de=inicio) == puntos[21][0]
+    # con menos de 15 puntos despues del inicio no hay con que cerrar
+    assert momento_de_cierre(puntos, 10.0, 0.5, normalidad=15, despues_de=puntos[50][0]) is None
+
+
+def test_el_fin_no_cruza_un_hueco_de_datos():
+    seguidos = _serie([40.0] * 5 + [10.0] * 30)
+    con_hueco = seguidos[:10] + [(t + timedelta(minutes=30), v) for t, v in seguidos[10:]]
+    assert momento_de_cierre(con_hueco, 10.0, 0.5, normalidad=15) == con_hueco[10][0]
 
 
 def test_no_cierra_con_normalidad_mas_corta_que_la_exigida():
@@ -629,6 +672,9 @@ def test_ciclo_cierra_la_anomalia_que_volvio_a_normal(monkeypatch):
 
     assert resumen["anomalias_cerradas"] == 1
     assert conexion.cerradas and conexion.cerradas[0][1] == 7
+    fin = conexion.cerradas[0][0]
+    # la serie es normal desde siempre: el fin es el primer punto despues del inicio
+    assert fin == INICIO - timedelta(hours=1) + MINUTO
 
 
 def test_ciclo_no_cierra_si_la_fuente_esta_degradada(monkeypatch):
@@ -717,3 +763,178 @@ def test_una_anomalia_con_otro_inicio_si_entra_pese_al_falso_positivo(monkeypatc
     assert resumen["anomalias_abiertas"] == 1
     assert len(conexion.filas) == 2
     assert {f["estado"] for f in conexion.filas} == {"falso_positivo", "detectada"}
+
+
+# ------------------------------------------- punto 1.1 y 1.2: arranque y borde
+DIA = 24 * 60
+
+
+def test_evento_al_principio_de_la_ventana_no_abre_nada():
+    """Punto 1.2: los primeros puntos de la consulta no tienen la linea base
+    completa (60 min) y no se evaluan. Con mad-v1 bastaban 5 puntos, y esto
+    abria anomalias de severidad baja con inicio de casi un dia antes."""
+    valores = _plano(DIA)
+    for i in range(20, 40):                      # un evento en el minuto 20 de las 24 h
+        valores[i] = 40.0
+    assert detectar_eventos(_serie(valores), ventana=60, persistencia=3) == []
+
+
+def test_sin_historia_completa_no_se_clasifica():
+    """El limite es exactamente la ventana: el punto 60 ya tiene 60 de
+    historia y si se evalua."""
+    valores = _plano(70)
+    valores[57:61] = [40.0] * 4                 # puntos 57 a 60: solo el 60 se evalua
+    assert detectar_eventos(_serie(valores), ventana=60, persistencia=1) != []
+    assert detectar_eventos(_serie(valores), ventana=60, persistencia=2) == []
+
+
+def _repo_dia(ahora, *, escalon_desde):
+    """Una serie de 24 h que termina en `ahora`, con un escalon de 20 min
+    que empieza `escalon_desde` minutos antes de `ahora`."""
+    class Repo(_FalsoRepositorio):
+        def serie(self, activo, metrica, desde, hasta, *, agrupar=None, filtros=None):
+            self.consultas.append((metrica, agrupar, filtros))
+            valores = _plano(DIA)
+            arranque = DIA - 1 - escalon_desde
+            for i in range(arranque, min(arranque + 20, DIA)):
+                valores[i] = 40.0
+            return _respuesta([_serie_hasta(valores, hasta)], etiquetas=[{}])
+    return Repo(["system_memory_utilization"])
+
+
+def test_al_arrancar_no_abre_lo_del_dia_anterior(monkeypatch):
+    """Punto 1.1: un evento de hace horas, con la linea base completa, no se
+    abre en el ciclo normal: si el servicio estaba arriba ya lo abrio, y si
+    no, abrirlo ahora es lo que llenaba la lista al arrancar."""
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    resumen = Detector(_repo_dia(INICIO, escalon_desde=5 * 60), "postgresql://doble").ciclo(ahora=INICIO)
+
+    assert resumen["anomalias_abiertas"] == 0
+    assert conexion.inserts == []
+
+
+def test_un_escalon_en_los_ultimos_minutos_abre_una_sola(monkeypatch):
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    detector = Detector(_repo_dia(INICIO, escalon_desde=8), "postgresql://doble")
+
+    assert detector.ciclo(ahora=INICIO)["anomalias_abiertas"] == 1
+    inicio = conexion.inserts[0][3]
+    assert INICIO - 8 * MINUTO <= inicio <= INICIO
+    # el ciclo siguiente ve la misma racha: no abre otra
+    assert detector.ciclo(ahora=INICIO)["anomalias_abiertas"] == 0
+
+
+def test_max_antiguedad_es_configurable(monkeypatch):
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    repo = _repo_dia(INICIO, escalon_desde=45)   # empezo hace 45 min (inicio a los 43)
+
+    assert Detector(repo, "postgresql://doble").ciclo(ahora=INICIO)["anomalias_abiertas"] == 0
+    assert Detector(repo, "postgresql://doble", max_antiguedad=60).ciclo(
+        ahora=INICIO)["anomalias_abiertas"] == 1
+
+
+def test_rellenar_abre_lo_de_las_24_horas(monkeypatch):
+    """`--rellenar`: la deteccion hacia atras, aparte del ciclo normal."""
+    from zenit.deteccion.detector import Detector
+
+    conexion = _FalsaConexion()
+    _conectado(monkeypatch, conexion)
+    detector = Detector(_repo_dia(INICIO, escalon_desde=5 * 60), "postgresql://doble")
+
+    assert detector.ciclo(ahora=INICIO, rellenar=True)["anomalias_abiertas"] == 1
+
+
+def test_main_rellenar_no_va_con_cada(monkeypatch, capsys):
+    from zenit.deteccion import __main__ as principal
+
+    assert principal.principal(["--rellenar", "--cada", "60"]) == 2
+
+
+# ------------------------------------------------- punto 1.3: particiones
+def test_particion_reconoce_las_particiones_y_no_los_discos():
+    import re
+
+    for particion in ("sda1", "vda1", "xvda1", "sdb15", "nvme0n1p1", "mmcblk0p2"):
+        assert re.fullmatch(PARTICION, particion), particion
+    for disco in ("sda", "vda", "xvda", "sdb", "nvme0n1", "dm-0"):
+        assert not re.fullmatch(PARTICION, disco), disco
+
+
+def test_disco_y_particion_abren_una_sola_anomalia():
+    """El mismo evento se ve en `sda` y en `sda1`: solo cuenta el disco."""
+    senal = next(s for s in SENALES
+                 if s.metrica == "system_disk_io" and s.filtros.get("direction") == "write")
+    saturado = _contador([100] * 90 + [400] * 30)
+    respuesta = _respuesta([saturado, saturado, saturado],
+                           etiquetas=[{"device": "sda"}, {"device": "sda1"}, {"device": "sda15"}])
+
+    hallazgos = evaluar_senal(senal, respuesta, ventana=60, persistencia=3)
+
+    assert [h.dimensiones["device"] for h in hallazgos] == ["sda"]
+
+
+def test_las_senales_de_disco_excluyen_particiones():
+    for senal in SENALES:
+        if senal.metrica == "system_disk_io":
+            assert senal.excluye({"device": "vda1"})
+            assert not senal.excluye({"device": "vda"})
+    # una senal sin `excluir` no excluye nada
+    assert not Senal(metrica="x").excluye({"device": "sda1"})
+
+
+# --------------------------------------------- punto 1.5: piso de la escala
+def test_serie_casi_plana_en_cero_no_dispara_por_un_punto_porcentual():
+    """Lo de Kaderno: CPU en espera de 0,001 a 0,01. Sin piso, el MAD de una
+    serie casi plana en cero da puntajes de decenas o cientos; con el piso de las
+    fracciones (0,01), un punto porcentual queda lejos del corte."""
+    random.seed(7)
+    valores = [0.001 + random.uniform(-0.0002, 0.0002) for _ in range(90)] + [0.01] * 10
+
+    sin_piso = detectar_eventos(_serie(valores), ventana=60, persistencia=3, piso_relativo=0.0)
+    con_piso = detectar_eventos(_serie(valores), ventana=60, persistencia=3,
+                                piso_absoluto=PISO_FRACCION)
+
+    assert sin_piso and sin_piso[0].puntaje > 10 * Z_CRITICO     # severidad media o mas
+    assert con_piso == []
+
+
+def test_el_piso_no_tapa_un_fallo_real():
+    """Una CPU que pasa del 5 % al 90 % sigue siendo critica con el piso."""
+    valores = _plano(90, nivel=0.05, ruido=0.002) + [0.9] * 10
+    eventos = detectar_eventos(_serie(valores), ventana=60, persistencia=3,
+                               piso_absoluto=PISO_FRACCION)
+    assert len(eventos) == 1 and eventos[0].puntaje >= Z_CRITICO
+
+
+def test_piso_relativo_de_la_escala():
+    base = calcular_baseline([100.0, 100.0, 100.0, 100.0], piso_relativo=0.05)
+    assert base.escala == 5.0
+    # sin pisos es la formula de antes: serie constante, sin escala
+    assert calcular_baseline([100.0] * 4).escala is None
+    # el absoluto manda cuando la mediana es cero
+    assert calcular_baseline([0.0] * 4, piso_relativo=0.05, piso_absoluto=0.01).escala == 0.01
+
+
+def test_el_piso_queda_en_la_evidencia_y_en_la_linea_base_congelada():
+    """El cierre usa la escala congelada: tiene que ser la misma, con piso,
+    que decidio abrir."""
+    valores = _plano(90, nivel=0.05, ruido=0.0) + [0.9] * 10
+    evento = detectar_eventos(_serie(valores), ventana=60, persistencia=3,
+                              piso_absoluto=PISO_FRACCION)[0]
+    assert evento.evidencia["linea_base"]["escala"] >= PISO_FRACCION
+    assert evento.evidencia["piso"] == {"relativo": 0.0, "absoluto": PISO_FRACCION}
+
+
+def test_las_fracciones_llevan_piso_absoluto():
+    for senal in SENALES:
+        if senal.metrica.endswith("_utilization"):
+            assert senal.piso_escala == PISO_FRACCION, senal.clave
