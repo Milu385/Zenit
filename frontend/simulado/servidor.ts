@@ -193,6 +193,12 @@ const RUTAS: Ruta[] = [
     h: ({ res }, m) => d.detalle(id(m)) ?? enviar(res, 404, { detail: `no existe el incidente ${m[1]}` }),
   },
   {
+    metodo: "GET",
+    patron: /^\/api\/incidentes\/(\d+)\/evidencia$/,
+    permiso: "incidentes:ver",
+    h: ({ res }, m) => d.evidenciaIncidente(id(m)) ?? enviar(res, 404, { detail: `no existe el incidente ${m[1]}` }),
+  },
+  {
     metodo: "POST",
     patron: /^\/api\/incidentes\/(\d+)\/estado$/,
     permiso: "incidentes:gestionar",

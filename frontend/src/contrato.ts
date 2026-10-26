@@ -173,6 +173,56 @@ export type DetalleIncidente = Omit<Incidente, "tiene_diagnostico"> & {
   marcada_en: string | null;
 };
 
+// GET /api/incidentes/{id}/evidencia (H-039): las tres senales en la ventana del incidente.
+export type ResumenCambio = {
+  antes_mediana: number | null;
+  durante_mediana: number | null;
+  durante_min: number | null;
+  durante_max: number | null;
+  puntos_antes?: number;
+  puntos_durante?: number;
+  cambio_absoluto: number | null; // maximo durante menos la mediana de antes
+  cambio_relativo: number | null; // fraccion; null si la base es cero
+  cambio_relativo_mediana?: number | null;
+};
+export type MetricaEvidencia = {
+  metrica: string;
+  dimensiones: Record<string, string>;
+  papel: "afectada" | "relacionada";
+  clase: "medida" | "acumulada" | null;
+  unidad: string | null; // "por segundo" en las acumuladas
+  resolucion_s?: number;
+  resumen: ResumenCambio;
+  puntos?: [string, number][]; // solo la afectada
+};
+export type ConteosEvidencia = { registros: number; registros_error: number; spans: number; spans_error: number };
+export type CorrelacionEvidencia = {
+  momento: string;
+  servicio: string;
+  severidad: string;
+  cuerpo: string;
+  traza_id: string;
+  operacion: string | null;
+  duracion_ns: number | null;
+  estado_span: string | null;
+};
+export type EvidenciaIncidente = {
+  incidente: number;
+  activo: string;
+  metrica: string;
+  dimensiones: Record<string, string>;
+  recuperada: string;
+  ventana: { desde: string; hasta: string };
+  ventana_registros: { desde: string; hasta: string };
+  metricas: MetricaEvidencia[]; // la afectada primero, luego las que mas cambiaron
+  metricas_relacionadas: string[];
+  registros_error: Registro[];
+  trazas_error: ResumenTraza[];
+  correlacion: CorrelacionEvidencia[];
+  conteos: ConteosEvidencia | null; // null si no se pudo consultar el almacen analitico
+  faltantes: string[]; // lo que no se pudo recuperar, en texto
+};
+
 // POST /api/incidentes/{id}/estado (H-037). Solo esas dos transiciones son
 // manuales. 409 si el incidente ya esta cerrado o descartado.
 export type PeticionEstado = { estado: "confirmada" | "falso_positivo" };

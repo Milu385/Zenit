@@ -201,10 +201,17 @@ export default function Costos() {
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
   const invertido = !!desde && !!hasta && desde > hasta;
-  const r = useCarga((s) => (invertido ? new Promise<never>(() => {}) : api.costos(desde, hasta, s)), [desde, hasta, invertido]);
+  // H-054: refresco cada 5 min; si falla, se ve el aviso de datos desactualizados
+  const REFRESCO_MS = 5 * 60_000;
+  const r = useCarga(
+    (s) => (invertido ? new Promise<never>(() => {}) : api.costos(desde, hasta, s)),
+    [desde, hasta, invertido],
+    REFRESCO_MS,
+  );
   const an = useCarga(
     (s) => (invertido ? new Promise<never>(() => {}) : api.analisisCostos(desde, hasta, s)),
     [desde, hasta, invertido],
+    REFRESCO_MS,
   );
   // el entorno sale del inventario; si no carga, la pantalla sigue sin esa columna
   const inv = useCarga((s) => api.activos(s), []);

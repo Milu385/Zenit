@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { Registro, ResumenTraza, Span } from "../contrato";
+import { useRuta } from "../enrutador";
 import { fechaHora, hace } from "../formato";
 import { useCarga } from "../useCarga";
 import { SinDatos } from "./Estados";
@@ -195,7 +196,16 @@ export default function RegistrosYTrazas({ activo }: { activo: string }) {
   const [texto, setTexto] = useState("");
   const [buscar, setBuscar] = useState("");
   const [soloErrores, setSoloErrores] = useState(false);
-  const [traza, setTraza] = useState<string | null>(null);
+  // ?traza=<id> abre esa traza: asi enlaza la evidencia del incidente (H-039)
+  const { consulta } = useRuta();
+  const trazaPedida = consulta.get("traza");
+  const [traza, setTraza] = useState<string | null>(trazaPedida);
+  useEffect(() => {
+    if (!trazaPedida) return;
+    setTraza(trazaPedida);
+    const t = window.setTimeout(() => document.getElementById("titulo-trazas")?.scrollIntoView({ block: "start" }), 300);
+    return () => window.clearTimeout(t);
+  }, [trazaPedida]);
   const [vuelta, setVuelta] = useState(0);
   // la ventana se fija al elegirla o al pulsar "actualizar", no en cada render
   const ventana = useMemo(() => {

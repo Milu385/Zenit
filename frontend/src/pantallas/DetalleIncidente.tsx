@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ErrorApi } from "../api";
-import { ErrorVista } from "../componentes/Estados";
+import EvidenciaSenales from "../componentes/EvidenciaSenales";
+import { ErrorVista, SinDatos } from "../componentes/Estados";
 import { InsigniaIncidente, InsigniaSeveridad } from "../componentes/Insignias";
 import Marco from "../componentes/Marco";
 import SegunCarga from "../componentes/SegunCarga";
@@ -87,6 +88,12 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
   const [pidiendo, setPidiendo] = useState(false);
   const [enCola, setEnCola] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hecho, setHecho] = useState<string | null>(null);
+  // H-054: el boton pulsado desaparece al marcar; el foco pasa al aviso
+  const aviso = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (hecho || error) aviso.current?.focus();
+  }, [hecho, error]);
 
   // Si el diagnostico quedo en cola (202), se vuelve a pedir el incidente
   // hasta que llegue. No hay otro aviso en el contrato.
@@ -111,9 +118,11 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
   const marcar = async (estado: PeticionEstado["estado"]) => {
     setMarcando(estado);
     setError(null);
+    setHecho(null);
     try {
       const r = await api.cambiarEstado(d.id, estado);
       actualizar({ ...d, estado: r.estado, fin: r.fin, marcada_por: r.marcada_por, marcada_en: r.marcada_en });
+      setHecho(estado === "confirmada" ? "Incidente confirmado como real." : "Incidente marcado como falso positivo.");
     } catch (e) {
       setError(
         e instanceof ErrorApi && e.estado === 409
@@ -194,11 +203,9 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
           </div>
         )}
       </header>
-      {error && (
-        <p className="mensaje-error" role="alert">
-          {error}
-        </p>
-      )}
+      <p ref={aviso} tabIndex={-1} className={error ? "mensaje-error aviso-foco" : "mensaje-ok aviso-foco"} role="status">
+        {error ?? hecho ?? ""}
+      </p>
 
       <section className="panel panel-blanco anomalia" aria-labelledby="titulo-anomalia">
         <h3 id="titulo-anomalia">Que se desvio</h3>
@@ -306,7 +313,9 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
               </li>
             ))}
           </ol>
-          <p className="nota">Registros y trazas todavia no llegan por la API (contrato v1).</p>
+          <p className="nota">
+            <a href="#titulo-ev-senales">Registros y trazas de la ventana, mas abajo ↓</a>
+          </p>
         </section>
       </div>
 
@@ -327,6 +336,8 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
           />
         </section>
       )}
+
+      <EvidenciaSenales id={d.id} />
     </>
   );
 }
@@ -334,7 +345,19 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
 export default function DetalleIncidente({ id }: { id: string }) {
   const n = Number(id);
   const valido = Number.isInteger(n) && n > 0;
-  const r = useCarga((s) => (valido ? api.incidente(n, s) : Promise.reject(new Error("no existe"))), [n, valido]);
+  // H-054: se refresca cada 30 s (asi existe el estado "desactualizado" si un
+  // refresco falla) y un 404 es "no existe", no un error de carga
+  const r = useCarga(
+    (s) =>
+      valido
+        ? api.incidente(n, s).catch((e) => {
+            if (e instanceof ErrorApi && e.estado === 404) return null;
+            throw e;
+          })
+        : Promise.reject(new Error("no existe")),
+    [n, valido],
+    30_000,
+  );
   const { reemplazar } = r;
   const actualizar = useMemo(() => (nuevo: Detalle) => reemplazar(() => nuevo), [reemplazar]);
   return (
@@ -343,7 +366,13 @@ export default function DetalleIncidente({ id }: { id: string }) {
         <ErrorVista mensaje={`"${id}" no es un numero de incidente.`} />
       ) : (
         <SegunCarga r={r} que="el incidente">
-          {(d) => <Contenido key={d.id} d={d} actualizar={actualizar} />}
+          {(d) =>
+            d ? (
+              <Contenido key={d.id} d={d} actualizar={actualizar} />
+            ) : (
+              <SinDatos titulo={`No hay un incidente ${n}`} detalle="Puede que el número esté mal o que el incidente se haya borrado." />
+            )
+          }
         </SegunCarga>
       )}
     </Marco>

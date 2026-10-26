@@ -12,10 +12,12 @@
   --gris: #6b6a66;
   --linea: rgba(0, 0, 0, 0.14);
   /* estados: cada uno ademas lleva simbolo y texto */
-  --bien: #1a8f4c;
-  --regular: #c96f00;
+  /* H-054: oscurecidos para llegar a 4,5:1 sobre blanco y sobre el fondo (WCAG AA) */
+  --bien: #157a40;
+  --regular: #9e5600;
   --mal: #d6341f;
-  --apagado: #7d7c78;
+  --apagado: #66655f;
+  --azul-panel: #2a62d4;     /* fondo del panel azul: 5,5:1 con texto blanco */
   --fondo: #f3f2ee;
   font-family: "Poppins", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
@@ -72,7 +74,13 @@ button { font: inherit; }
 .panel { border-radius: 14px; padding: 20px 22px; }
 .panel h2, .panel h3 { margin: 0 0 12px; font-size: 20px; font-weight: 700; }
 .panel-amarillo { background: var(--amarillo); }
-.panel-azul { background: var(--azul); color: #fff; }
+.panel-azul { background: var(--azul-panel); color: #fff; }
+.panel-azul :focus-visible { outline-color: #fff; }
+/* sobre el amarillo, el gris y los colores de estado no llegan a 4,5:1 */
+.panel-amarillo .nota, .panel-amarillo .meta, .panel-amarillo .meta-dato { color: #3d3c39; }
+.panel-amarillo a { color: var(--tinta); }
+.panel-amarillo .severidad, .panel-amarillo .nivel, .panel-amarillo .texto-mal { background: #fff; padding: 0 6px; border-radius: 4px; }
+.panel-amarillo :focus-visible { outline-color: var(--tinta); }
 .panel-blanco { background: #fff; }
 .panel-azul .panel-blanco { color: var(--tinta); }
 .cuenta { display: inline-block; min-width: 1.6em; padding: 0 6px; margin-left: 6px; border-radius: 999px; background: rgba(0, 0, 0, 0.12); font-size: 0.8em; text-align: center; }
@@ -372,3 +380,15 @@ button { font: inherit; }
 @media (max-width: 760px) {
   .cifras-cuatro { grid-template-columns: 1fr 1fr; }
 }
+
+/* H-039 en el detalle del incidente: metricas, registros y trazas de la ventana */
+.evidencia-senales .bloque-evidencia { margin-top: 16px; }
+.evidencia-senales h4 { margin: 0 0 6px; font-size: 16px; }
+.mensaje-una-linea { max-width: 0; width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, monospace; font-size: 13px; }
+
+/* H-054: foco visible tambien en filas de tabla que se abren con Enter */
+.fila-inc { cursor: pointer; }
+.fila-inc:focus-visible { outline: 3px solid var(--azul-oscuro); outline-offset: -3px; }
+.aviso-foco:focus { outline: none; }
+.aviso-foco:focus-visible { outline: 2px dashed var(--azul-oscuro); }
+.titulo-pagina:focus { outline: none; }
