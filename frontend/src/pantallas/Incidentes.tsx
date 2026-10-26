@@ -66,7 +66,7 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
     } catch (e) {
       setError(
         e instanceof ErrorApi && e.estado === 409
-          ? `El incidente ${i.id} ya estaba cerrado o descartado; la lista se pone al dia en el siguiente refresco.`
+          ? `El incidente ${i.id} ya estaba cerrado o descartado; la lista se pone al día en el siguiente refresco.`
           : `No se pudo marcar el incidente ${i.id}: ${e instanceof Error ? e.message : e}`,
       );
     } finally {
@@ -97,12 +97,12 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
       {visibles.length === 0 ? (
         <SinDatos
           titulo={filtro === "abiertos" ? "No hay incidentes abiertos" : "No hay incidentes en este estado"}
-          detalle={filtro === "abiertos" ? "Ninguna senal esta fuera de lo normal en este momento." : "Prueba con otro filtro."}
+          detalle={filtro === "abiertos" ? "Ninguna señal está fuera de lo normal en este momento." : "Prueba con otro filtro."}
         />
       ) : (
         <div className="tabla-contenedor">
           <table className="tabla tabla-incidentes">
-            <caption className="solo-lector">Incidentes, los abiertos y mas severos primero</caption>
+            <caption className="solo-lector">Incidentes, los abiertos y más severos primero</caption>
             <thead>
               <tr>
                 <th scope="col">Estado</th>
@@ -110,8 +110,8 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
                 <th scope="col">Que pasa</th>
                 <th scope="col">Activo</th>
                 <th scope="col">Desde</th>
-                <th scope="col">Duracion</th>
-                <th scope="col">Hipotesis</th>
+                <th scope="col">Duración</th>
+                <th scope="col">Hipótesis</th>
                 <th scope="col">
                   <span className="solo-lector">Acciones</span>
                 </th>
@@ -141,7 +141,7 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
                   <td>{i.activo}</td>
                   <td title={new Date(i.inicio).toLocaleString()}>{hace(i.inicio)}</td>
                   <td>{duracion(i.inicio, i.fin)}</td>
-                  <td>{i.tiene_diagnostico ? "Lista" : <span className="apagado">Aun no</span>}</td>
+                  <td>{i.tiene_diagnostico ? "Lista" : <span className="apagado">Aún no</span>}</td>
                   <td className="celda-accion" onClick={(e) => e.stopPropagation()}>
                     {puede("incidentes:gestionar") && ABIERTO.includes(i.estado) && (
                       <button

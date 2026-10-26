@@ -41,7 +41,7 @@ export function ProveedorSesion({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const vencida = () => setSesion({ estado: "anonimo", motivo: "Tu sesion vencio. Vuelve a entrar." });
+    const vencida = () => setSesion({ estado: "anonimo", motivo: "Tu sesión venció. Vuelve a entrar." });
     window.addEventListener(SESION_VENCIDA, vencida);
     return () => window.removeEventListener(SESION_VENCIDA, vencida);
   }, []);

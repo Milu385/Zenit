@@ -12,7 +12,7 @@ export const PROVEEDOR: Record<Proveedor, { nombre: string; sigla: string }> = {
 // degradado: mas de 5 min sin datos (H-021); atencion: incidentes abiertos.
 export const ESTADO_ACTIVO: Record<EstadoActivo, { texto: string; plural: string; simbolo: string }> = {
   degradado: { texto: "Degradado", plural: "Degradados", simbolo: "✕" },
-  atencion: { texto: "Requiere atencion", plural: "Requieren atencion", simbolo: "!" },
+  atencion: { texto: "Requiere atención", plural: "Requieren atención", simbolo: "!" },
   sin_datos: { texto: "Sin datos", plural: "Sin datos", simbolo: "?" },
   ok: { texto: "Operativo", plural: "Operativos", simbolo: "✓" },
   retirado: { texto: "Retirado", plural: "Retirados", simbolo: "–" },
@@ -22,11 +22,11 @@ export const ORDEN_ESTADO_ACTIVO: EstadoActivo[] = ["degradado", "atencion", "si
 export const REQUIERE_ATENCION: EstadoActivo[] = ["degradado", "atencion", "sin_datos"];
 
 export const ESTADO_INCIDENTE: Record<EstadoIncidente, { texto: string; simbolo: string; ayuda: string }> = {
-  detectada: { texto: "Detectada", simbolo: "●", ayuda: "El detector la marco y aun no hay diagnostico" },
-  diagnosticada: { texto: "Con hipotesis", simbolo: "◆", ayuda: "Hay una hipotesis de causa por revisar" },
-  confirmada: { texto: "Confirmada", simbolo: "▲", ayuda: "Un operador confirmo que es real" },
-  falso_positivo: { texto: "Falso positivo", simbolo: "○", ayuda: "Un operador la descarto" },
-  cerrada: { texto: "Cerrada", simbolo: "✓", ayuda: "El detector la cerro porque la desviacion ceso" },
+  detectada: { texto: "Detectada", simbolo: "●", ayuda: "El detector la marcó y aún no hay diagnóstico" },
+  diagnosticada: { texto: "Con hipótesis", simbolo: "◆", ayuda: "Hay una hipótesis de causa por revisar" },
+  confirmada: { texto: "Confirmada", simbolo: "▲", ayuda: "Un operador confirmó que es real" },
+  falso_positivo: { texto: "Falso positivo", simbolo: "○", ayuda: "Un operador la descartó" },
+  cerrada: { texto: "Cerrada", simbolo: "✓", ayuda: "El detector la cerró porque la desviación cesó" },
 };
 export const ORDEN_ESTADO_INCIDENTE: EstadoIncidente[] = ["detectada", "diagnosticada", "confirmada", "falso_positivo", "cerrada"];
 export const ABIERTO: EstadoIncidente[] = ["detectada", "diagnosticada", "confirmada"];
@@ -76,8 +76,9 @@ export const NOMBRE_METRICA: Record<string, string> = {
   system_network_io: "Red",
   http_server_request_duration: "Latencia",
   system_disk_io: "E/S de disco",
-  system_paging_operations: "Paginacion",
+  system_paging_operations: "Paginación",
   system_filesystem_usage: "Uso del disco",
+  system_paging_usage: "Uso de swap",
   system_cpu_load_average_1m: "Carga (1 min)",
   system_processes_count: "Procesos",
   traces_span_metrics_calls: "Llamadas",

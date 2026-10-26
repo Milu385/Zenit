@@ -28,7 +28,7 @@ function Rutas() {
   if (sesion.estado === "comprobando")
     return (
       <div className="pantalla-completa">
-        <Cargando texto="Comprobando la sesion..." />
+        <Cargando texto="Comprobando la sesión..." />
       </div>
     );
   if (sesion.estado === "anonimo") return <Login motivo={sesion.motivo} />;
@@ -43,7 +43,7 @@ function Rutas() {
   if (ruta === "/fuentes") return <Fuentes />;
   return (
     <Marco titulo="No encontrada">
-      <SinDatos titulo="Esta pagina no existe" detalle={`No hay nada en ${ruta}.`} />
+      <SinDatos titulo="Esta página no existe" detalle={`No hay nada en ${ruta}.`} />
       <p>
         <Enlace a="/">Volver a la infraestructura</Enlace>
       </p>

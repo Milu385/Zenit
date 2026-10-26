@@ -81,11 +81,11 @@ function Ficha({ a }: { a: Detalle }) {
             </dd>
           </div>
           <div>
-            <dt>CPU, ultimos 5 min</dt>
+            <dt>CPU, últimos 5 min</dt>
             <dd>{porcentaje(a.cpu_reciente)}</dd>
           </div>
           <div>
-            <dt>Ultima recepcion</dt>
+            <dt>Última recepción</dt>
             <dd>{hace(a.ultima_recepcion)}</dd>
           </div>
           {puede("costos:ver") && <CostoDelActivo activo={a.id} />}
@@ -98,7 +98,7 @@ function Ficha({ a }: { a: Detalle }) {
         </section>
       )}
       <section className="panel panel-blanco">
-        <h3>Senales</h3>
+        <h3>Señales</h3>
         <VistaSerie activo={a.id} />
       </section>
       {puede("registros:ver") && <RegistrosYTrazas activo={a.id} />}
@@ -124,7 +124,7 @@ export default function DetalleActivo({ id }: { id: string }) {
           a ? (
             <Ficha a={a} />
           ) : (
-            <SinDatos titulo={`No hay un activo "${id}" en el inventario`} detalle="Puede que lo hayan sacado del catalogo." />
+            <SinDatos titulo={`No hay un activo "${id}" en el inventario`} detalle="Puede que lo hayan sacado del catálogo." />
           )
         }
       </SegunCarga>

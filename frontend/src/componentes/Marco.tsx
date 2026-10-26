@@ -112,7 +112,7 @@ export default function Marco({ titulo, children }: { titulo: string; children: 
           <div className="lateral-usuario">
             <IconoUsuario />
             <div>
-              <p className="nombre">{yo.usuario}</p>
+              <p className="nombre">{mayuscula(yo.usuario)}</p>
               <p className="rol">{NOMBRE_ROL[yo.rol]}</p>
               <button type="button" className="boton-texto" onClick={() => void salir()}>
                 Cerrar sesión

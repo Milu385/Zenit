@@ -19,15 +19,15 @@ export default function TablaSerie({ respuesta, tasa = false }: { respuesta: Res
   const m = respuesta.metrica;
   return (
     <table className="tabla">
-      <caption>Resumen del rango, a resolucion de {respuesta.resolucion}</caption>
+      <caption>Resumen del rango, a resolución de {respuesta.resolucion}</caption>
       <thead>
         <tr>
           <th scope="col">Serie</th>
-          <th scope="col">Ultimo valor</th>
+          <th scope="col">Último valor</th>
           <th scope="col">Hora</th>
-          <th scope="col">Minimo</th>
+          <th scope="col">Mínimo</th>
           <th scope="col">Promedio</th>
-          <th scope="col">Maximo</th>
+          <th scope="col">Máximo</th>
           <th scope="col">Intervalos</th>
         </tr>
       </thead>

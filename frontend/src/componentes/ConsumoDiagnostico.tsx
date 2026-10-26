@@ -13,8 +13,8 @@ export default function ConsumoDiagnostico() {
   const r = useCarga((s) => api.consumoDiagnostico(s), [], 60_000);
   return (
     <section className="panel panel-blanco" aria-labelledby="titulo-consumo">
-      <h2 id="titulo-consumo">Consumo del diagnostico</h2>
-      <SegunCarga r={r} que="el consumo del diagnostico">
+      <h2 id="titulo-consumo">Consumo del diagnóstico</h2>
+      <SegunCarga r={r} que="el consumo del diagnóstico">
         {(c) => (
           <>
             <p className="nota">
@@ -25,13 +25,13 @@ export default function ConsumoDiagnostico() {
             ) : (
               <div className="tabla-contenedor">
                 <table className="tabla">
-                  <caption className="solo-lector">Diagnosticos y tokens por dia y por modelo</caption>
+                  <caption className="solo-lector">Diagnósticos y tokens por día y por modelo</caption>
                   <thead>
                     <tr>
-                      <th scope="col">Dia</th>
+                      <th scope="col">Día</th>
                       <th scope="col">Modelo</th>
                       <th scope="col" className="numero">
-                        Diagnosticos
+                        Diagnósticos
                       </th>
                       <th scope="col" className="numero">
                         Tokens de entrada
