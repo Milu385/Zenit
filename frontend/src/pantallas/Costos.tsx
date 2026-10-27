@@ -44,7 +44,7 @@ function Importar({ alTerminar }: { alTerminar: () => void }) {
   return (
     <form className="panel panel-azul importar" onSubmit={enviar}>
       <h2>Importar factura</h2>
-      <p>Exporta la factura de DigitalOcean en CSV (Billing, Download CSV) y subela aqui.</p>
+      <p>Exporta la factura de DigitalOcean en CSV (Billing, Download CSV) y súbela aquí.</p>
       <label>
         Archivo CSV
         <input ref={archivo} type="file" accept=".csv,text/csv" />
@@ -56,14 +56,14 @@ function Importar({ alTerminar }: { alTerminar: () => void }) {
         {error && <p className="mensaje-error">{error}</p>}
         {resultado && (
           <p className="mensaje-ok">
-            {resultado.nueva ? "Factura importada" : "Esa factura ya estaba importada; no se duplico"}: {resultado.lineas} lineas,{" "}
+            {resultado.nueva ? "Factura importada" : "Esa factura ya estaba importada; no se duplicó"}: {resultado.lineas} líneas,{" "}
             {resultado.asignadas} atribuidas, {resultado.sin_asignar} sin asignar, total {dinero(resultado.total)}.
           </p>
         )}
       </div>
       {resultado && resultado.lineas_sin_asignar.length > 0 && (
         <details className="sin-asignar-importacion" open>
-          <summary>Lineas que no se atribuyeron y por que</summary>
+          <summary>Líneas que no se atribuyeron y por que</summary>
           <ul className="lista-simple">
             {resultado.lineas_sin_asignar.map((l, i) => (
               <li key={i}>
@@ -143,7 +143,7 @@ function Reporte({ r, activos }: { r: ReporteCostos; activos: Activo[] | null })
                     {nombreDe.has(a.activo) && <span className="detalle">{a.activo}</span>}
                   </th>
                   <td>{datosProveedor(a.proveedor).nombre}</td>
-                  {activos && <td>{entornoDe.get(a.activo) ?? "fuera del catalogo"}</td>}
+                  {activos && <td>{entornoDe.get(a.activo) ?? "fuera del catálogo"}</td>}
                   <td className="numero">{dinero(a.costo, r.moneda)}</td>
                   <td>{a.fuente}</td>
                 </tr>
@@ -153,7 +153,7 @@ function Reporte({ r, activos }: { r: ReporteCostos; activos: Activo[] | null })
         </div>
         {r.sin_asignar > 0 && (
           <p className="nota">
-            {dinero(r.sin_asignar, r.moneda)} no corresponden a un solo activo del catalogo y no se reparten. El detalle por linea se ve al
+            {dinero(r.sin_asignar, r.moneda)} no corresponden a un solo activo del catálogo y no se reparten. El detalle por línea se ve al
             importar la factura.
           </p>
         )}
@@ -168,7 +168,7 @@ function Reporte({ r, activos }: { r: ReporteCostos; activos: Activo[] | null })
         {porEntorno && (
           <Totales
             titulo="Por entorno"
-            filas={porEntorno.map(([k, v]) => [k === "desconocido" ? "Fuera del catalogo" : k, v])}
+            filas={porEntorno.map(([k, v]) => [k === "desconocido" ? "Fuera del catálogo" : k, v])}
             moneda={r.moneda}
           />
         )}

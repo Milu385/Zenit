@@ -21,8 +21,8 @@ const RANGOS = [
   { minutos: 360, texto: "6 h" },
   { minutos: 1440, texto: "24 h" },
   // desde aqui la API responde con los resumenes por minuto (H-019)
-  { minutos: 7 * 1440, texto: "7 dias" },
-  { minutos: 30 * 1440, texto: "30 dias" },
+  { minutos: 7 * 1440, texto: "7 días" },
+  { minutos: 30 * 1440, texto: "30 días" },
 ];
 const REFRESCO_MS = 10_000;
 
@@ -196,15 +196,15 @@ export default function VistaSerie({ activo, metrica: metricaFija, ventana, titu
   // ---- render
   const cuerpo = (() => {
     if (sinPermiso) return <SinPermiso que="las series de este activo" />;
-    if (metricas.estado === "cargando") return <Cargando texto="Buscando metricas del activo..." />;
+    if (metricas.estado === "cargando") return <Cargando texto="Buscando métricas del activo..." />;
     if (metricas.estado === "error") return <ErrorVista mensaje={metricas.mensaje} reintentar={reintentar} />;
     // con metrica fija (evidencia de un incidente) la ventana puede ser vieja
     // y la metrica no estar entre las de la ultima hora: no es "sin datos"
     if (!metricaFija && metricas.datos.length === 0)
       return (
         <SinDatos
-          titulo="Este activo no ha reportado en la ultima hora"
-          detalle="Revisa que el agente del nodo este arriba y que la ingesta no lo marque como huerfano."
+          titulo="Este activo no ha reportado en la última hora"
+          detalle="Revisa que el agente del nodo este arriba y que la ingesta no lo marque como huérfano."
         />
       );
     if (serie.estado === "cargando" || !listaLaAgrupacion) return <Cargando />;
@@ -218,7 +218,7 @@ export default function VistaSerie({ activo, metrica: metricaFija, ventana, titu
           detalle={
             ventana
               ? `${metrica} no tiene puntos para ${activo} entre ${ventana.desde.toLocaleTimeString()} y ${ventana.hasta.toLocaleTimeString()}.`
-              : `${metrica} no tiene puntos para ${activo} en las ultimas ${RANGOS.find((x) => x.minutos === minutos)?.texto ?? `${minutos} min`}.`
+              : `${metrica} no tiene puntos para ${activo} en las últimas ${RANGOS.find((x) => x.minutos === minutos)?.texto ?? `${minutos} min`}.`
           }
         />
       );
@@ -227,18 +227,18 @@ export default function VistaSerie({ activo, metrica: metricaFija, ventana, titu
         {r.fuente_degradada && (
           <p className="aviso-desactualizado" role="alert">
             Datos desactualizados: la fuente no reporta desde{" "}
-            {r.ultima_recepcion ? new Date(r.ultima_recepcion).toLocaleString("es-CO") : "hace mas de 5 minutos"}. Lo
+            {r.ultima_recepcion ? new Date(r.ultima_recepcion).toLocaleString("es-CO") : "hace más de 5 minutos"}. Lo
             que ves puede no reflejar el estado actual del activo.
           </p>
         )}
         <Grafica respuesta={r} refrescando={refrescando} tasa={tasa} />
         <p className="pie">
-          Resolucion {r.resolucion}
+          Resolución {r.resolucion}
           {r.intervalo_s && r.intervalo_s > 10 ? ` (un punto cada ${r.intervalo_s / 60} min)` : ""} ·{" "}
           {r.intervalos_esperados - r.intervalos_vacios} de {r.intervalos_esperados} intervalos con datos
-          {r.intervalos_vacios > 0 && ` · ${r.intervalos_vacios} vacios`}
+          {r.intervalos_vacios > 0 && ` · ${r.intervalos_vacios} vacíos`}
           {(r.intervalos_incompletos ?? 0) > 0 && ` · ${r.intervalos_incompletos} incompletos`}
-          {r.series_omitidas > 0 && ` · ${r.series_omitidas} series no mostradas (maximo 8)`}
+          {r.series_omitidas > 0 && ` · ${r.series_omitidas} series no mostradas (máximo 8)`}
         </p>
         {verTabla && <TablaSerie respuesta={r} tasa={tasa} />}
       </>
@@ -263,7 +263,7 @@ export default function VistaSerie({ activo, metrica: metricaFija, ventana, titu
         )}
         {!metricaFija && (
           <label>
-            Metrica
+            Métrica
             <select value={metrica} onChange={(e) => setMetrica(e.target.value)} disabled={!listos}>
               {metricas.estado === "listo" &&
                 metricas.datos.map((m) => (

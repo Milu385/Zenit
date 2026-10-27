@@ -51,7 +51,7 @@ function TarjetaActivo({ a }: { a: Activo }) {
           <Barra etiqueta="CPU 5 min" valor={a.cpu_reciente} />
         </span>
         <span className="tarjeta-activo-pie">
-          <span>Ultima recepcion {hace(a.ultima_recepcion)}</span>
+          <span>Última recepción {hace(a.ultima_recepcion)}</span>
           {a.incidentes_abiertos > 0 && (
             <span className="contador-incidentes">
               {a.incidentes_abiertos} {a.incidentes_abiertos === 1 ? "incidente abierto" : "incidentes abiertos"}
@@ -68,7 +68,7 @@ function ResumenHibrido({ activos }: { activos: Activo[] }) {
   return (
     <section className="panel panel-azul resumen-hibrido" aria-labelledby="titulo-hibrido">
       <div className="panel-blanco">
-        <h2 id="titulo-hibrido">Inventario hibrido</h2>
+        <h2 id="titulo-hibrido">Inventario híbrido</h2>
         <ul>
           {proveedores.map((p) => {
             const suyos = activos.filter((a) => a.proveedor === p);
@@ -111,7 +111,7 @@ function Contenido({ activos }: { activos: Activo[] }) {
   if (activos.length === 0)
     return (
       <SinDatos
-        titulo="Todavia no hay activos en el inventario"
+        titulo="Todavía no hay activos en el inventario"
         detalle="El descubrimiento todavia no encontro nodos. Para admitir uno a mano: zenit.admin catalogo admitir."
       />
     );
@@ -136,11 +136,11 @@ function Contenido({ activos }: { activos: Activo[] }) {
           <span className="franja-punto" aria-hidden="true" />
           <span>
             <strong>
-              {conProblemas ? `${conProblemas} de ${vigentes} activos requieren atencion` : `${vigentes} activos, operacion estable`}
+              {conProblemas ? `${conProblemas} de ${vigentes} activos requieren atención` : `${vigentes} activos, operación estable`}
             </strong>
             <br />
             {conProblemas
-              ? "Abajo, primero lo que dejo de reportar y despues lo que tiene incidentes abiertos."
+              ? "Abajo, primero lo que dejó de reportar y después lo que tiene incidentes abiertos."
               : "Todos los activos reportan y no tienen incidentes abiertos."}
           </span>
         </div>
@@ -183,7 +183,7 @@ function Contenido({ activos }: { activos: Activo[] }) {
             </select>
           </label>
         </form>
-        {visibles.length === 0 && <SinDatos titulo="Ningun activo coincide" detalle="Cambia la busqueda o los filtros." />}
+        {visibles.length === 0 && <SinDatos titulo="Ningún activo coincide" detalle="Cambia la búsqueda o los filtros." />}
         {grupos
           .filter((g) => g.lista.length > 0)
           .map(({ estado: e, lista }: { estado: EstadoActivo; lista: Activo[] }) => (

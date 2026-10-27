@@ -78,10 +78,10 @@ async function pedir<T>(ruta: string, o: Opciones = {}): Promise<T> {
     r = await fetch(ruta, { method: o.metodo ?? "GET", signal: o.senal, body: o.cuerpo, headers: cabeceras });
   } catch (e) {
     if ((e as Error).name === "AbortError") throw e;
-    throw new ErrorApi("No hay conexion con la API de Zenit.", 0);
+    throw new ErrorApi("No hay conexión con la API de Zenit.", 0);
   }
   if (!r.ok) {
-    let detalle = `La API respondio ${r.status}.`;
+    let detalle = `La API respondió ${r.status}.`;
     try {
       const cuerpo = await r.json();
       if (typeof cuerpo.detail === "string") detalle = cuerpo.detail;

@@ -28,7 +28,7 @@ export default function Login({ motivo }: { motivo?: string }) {
       await entrar({ usuario: usuario.trim(), clave }, recordar);
     } catch (ex) {
       setError(
-        ex instanceof ErrorApi && ex.estado === 401 ? "Usuario o clave incorrectos." : ex instanceof Error ? ex.message : String(ex),
+        ex instanceof ErrorApi && ex.estado === 401 ? "Usuario o contraseña incorrectos." : ex instanceof Error ? ex.message : String(ex),
       );
       setClave("");
     } finally {
@@ -52,12 +52,12 @@ export default function Login({ motivo }: { motivo?: string }) {
         <Logo className="login-logo" tallo="#fff" />
         <p className="login-lema">Monitorea y analiza tu infraestructura desde un solo lugar.</p>
         <p className="login-texto">
-          Centraliza el estado, rendimiento, trafico y consumo de tus servidores locales y servicios en la nube.
+          Centraliza el estado, rendimiento, tráfico y consumo de tus servidores locales y servicios en la nube.
         </p>
       </section>
       <section className="login-panel">
         <form className="login-tarjeta" onSubmit={enviar} noValidate>
-          <h2>Iniciar sesion</h2>
+          <h2>Iniciar sesión</h2>
           <p className="login-sub">Accede a tu panel de monitoreo.</p>
           {motivo && !error && (
             <p className="login-aviso" role="status">
@@ -73,7 +73,7 @@ export default function Login({ motivo }: { motivo?: string }) {
             aria-invalid={!!error}
             autoFocus
           />
-          <label htmlFor="clave">Clave</label>
+          <label htmlFor="clave">Contraseña</label>
           <div className="login-clave">
             <input
               id="clave"
@@ -95,7 +95,7 @@ export default function Login({ motivo }: { motivo?: string }) {
           </div>
           <label className="login-recordar">
             <input type="checkbox" checked={recordar} onChange={(e) => setRecordar(e.target.checked)} />
-            Mantener la sesion iniciada en este equipo
+            Mantener la sesión iniciada en este equipo
           </label>
           {error && (
             <p className="login-error" role="alert">
@@ -103,7 +103,7 @@ export default function Login({ motivo }: { motivo?: string }) {
             </p>
           )}
           <button type="submit" className="boton-primario" disabled={enviando}>
-            {enviando ? "Entrando..." : "Iniciar sesion"}
+            {enviando ? "Entrando..." : "Iniciar sesión"}
           </button>
           <p className="login-pie">Las cuentas las crea el administrador de Zenit.</p>
         </form>

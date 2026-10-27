@@ -30,7 +30,7 @@ function nivel(n: number): { texto: string; clase: string } {
   if (n >= 17) return { texto: n >= 21 ? "Fatal" : "Error", clase: "nivel-error" };
   if (n >= 13) return { texto: "Aviso", clase: "nivel-aviso" };
   if (n >= 9) return { texto: "Info", clase: "nivel-info" };
-  return { texto: n ? "Depuracion" : "Sin nivel", clase: "nivel-info" };
+  return { texto: n ? "Depuración" : "Sin nivel", clase: "nivel-info" };
 }
 
 const ms = (ns: number) => {
@@ -43,11 +43,11 @@ const hora = (iso: string) => new Date(iso).toLocaleTimeString("es-CO", { hour: 
 // ---------------------------------------------------------------- registros
 
 function TablaRegistros({ registros, verTraza }: { registros: Registro[]; verTraza: (id: string) => void }) {
-  if (registros.length === 0) return <SinDatos titulo="Sin registros" detalle="El activo no envio registros con estos filtros en la ventana." />;
+  if (registros.length === 0) return <SinDatos titulo="Sin registros" detalle="El activo no envió registros con estos filtros en la ventana." />;
   return (
     <div className="tabla-contenedor tabla-alta">
       <table className="tabla tabla-registros">
-        <caption className="solo-lector">Registros del activo, el mas reciente primero</caption>
+        <caption className="solo-lector">Registros del activo, el más reciente primero</caption>
         <thead>
           <tr>
             <th scope="col">Hora</th>
@@ -86,16 +86,16 @@ function TablaRegistros({ registros, verTraza }: { registros: Registro[]; verTra
 // ------------------------------------------------------------------- trazas
 
 function TablaTrazas({ trazas, elegida, verTraza }: { trazas: ResumenTraza[]; elegida: string | null; verTraza: (id: string) => void }) {
-  if (trazas.length === 0) return <SinDatos titulo="Sin trazas" detalle="Ninguna traza toco este activo en la ventana." />;
+  if (trazas.length === 0) return <SinDatos titulo="Sin trazas" detalle="Ninguna traza tocó este activo en la ventana." />;
   return (
     <div className="tabla-contenedor tabla-alta">
       <table className="tabla">
-        <caption className="solo-lector">Trazas que tocaron el activo, la mas reciente primero</caption>
+        <caption className="solo-lector">Trazas que tocaron el activo, la más reciente primero</caption>
         <thead>
           <tr>
-            <th scope="col">Termino</th>
-            <th scope="col">Operacion raiz</th>
-            <th scope="col">Duracion</th>
+            <th scope="col">Terminó</th>
+            <th scope="col">Operación raíz</th>
+            <th scope="col">Duración</th>
             <th scope="col">Spans</th>
             <th scope="col">Resultado</th>
             <th scope="col">Servicios</th>
@@ -107,7 +107,7 @@ function TablaTrazas({ trazas, elegida, verTraza }: { trazas: ResumenTraza[]; el
               <td title={fechaHora(t.fin)}>{hora(t.fin)}</td>
               <th scope="row">
                 <button type="button" className="boton-texto" aria-pressed={t.traza_id === elegida} onClick={() => verTraza(t.traza_id)}>
-                  {t.raiz || "(raiz fuera de la ventana)"}
+                  {t.raiz || "(raíz fuera de la ventana)"}
                 </button>
               </th>
               <td>{ms(t.duracion_ns)}</td>
@@ -273,7 +273,7 @@ export default function RegistrosYTrazas({ activo }: { activo: string }) {
         {(d) => (
           <>
             <TablaRegistros registros={d.registros} verTraza={verTraza} />
-            {d.registros.length === 200 && <p className="nota">Se muestran los 200 mas recientes. Acorta la ventana o filtra para ver otros.</p>}
+            {d.registros.length === 200 && <p className="nota">Se muestran los 200 más recientes. Acorta la ventana o filtra para ver otros.</p>}
           </>
         )}
       </SegunCarga>

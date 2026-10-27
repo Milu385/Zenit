@@ -18,7 +18,7 @@ import { useCarga, type ResultadoCarga } from "../useCarga";
 
 const REFRESCO_MS = 30_000;
 const SENALES: Senal[] = ["metricas", "registros", "trazas"];
-const NOMBRE_SENAL: Record<Senal, string> = { metricas: "Metricas", registros: "Registros", trazas: "Trazas" };
+const NOMBRE_SENAL: Record<Senal, string> = { metricas: "Métricas", registros: "Registros", trazas: "Trazas" };
 const ORDEN: Record<EstadoFuente, number> = { degradado: 0, sin_datos: 1, ok: 2 };
 
 const listo = <T,>(r: ResultadoCarga<T>) => (r.carga.estado === "listo" ? r.carga.datos : null);
@@ -46,30 +46,30 @@ function TablaFuentes({ fuentes }: { fuentes: Fuente[] }) {
       <h2 id="titulo-fuentes">
         {todas ? "Todas las fuentes" : "Fuentes que no reportan"} <span className="cuenta">{visibles.length}</span>
       </h2>
-      <p className="nota">Una fuente queda degradada con mas de 5 minutos sin recibir metricas. Sin datos: nunca reporto.</p>
+      <p className="nota">Una fuente queda degradada con más de 5 minutos sin recibir métricas. Sin datos: nunca reportó.</p>
       <label className="casilla">
-        <input type="checkbox" checked={todas} onChange={(e) => setTodas(e.target.checked)} /> Mostrar tambien las que reportan bien (
+        <input type="checkbox" checked={todas} onChange={(e) => setTodas(e.target.checked)} /> Mostrar también las que reportan bien (
         {propias.length - conProblema.length})
       </label>
       {visibles.length === 0 ? (
         <SinDatos
-          titulo={propias.length === 0 ? "No hay fuentes registradas" : "Todas las fuentes estan reportando"}
-          detalle={propias.length === 0 ? "La ingesta todavia no recibio telemetria de ningun activo del catalogo." : "Ninguna lleva mas de 5 minutos sin enviar metricas."}
+          titulo={propias.length === 0 ? "No hay fuentes registradas" : "Todas las fuentes están reportando"}
+          detalle={propias.length === 0 ? "La ingesta todavía no recibió telemetría de ningún activo del catálogo." : "Ninguna lleva más de 5 minutos sin enviar métricas."}
         />
       ) : (
         <div className="tabla-contenedor">
           <table className="tabla">
-            <caption className="solo-lector">Fuentes de telemetria, las degradadas primero</caption>
+            <caption className="solo-lector">Fuentes de telemetría, las degradadas primero</caption>
             <thead>
               <tr>
                 <th scope="col">Estado</th>
                 <th scope="col">Activo</th>
                 <th scope="col">Proveedor</th>
-                <th scope="col">Ultima recepcion</th>
+                <th scope="col">Última recepción</th>
                 {SENALES.map((s) => (
                   <th key={s} scope="col">
                     {NOMBRE_SENAL[s]}
-                    <span className="meta-dato">ultima vez · recibidas en 5 min</span>
+                    <span className="meta-dato">última vez · recibidas en 5 min</span>
                   </th>
                 ))}
               </tr>
@@ -120,8 +120,8 @@ function TablaFuentes({ fuentes }: { fuentes: Fuente[] }) {
 
 function situacion(h: Huerfana) {
   if (h.asociada_a) return { texto: `Asociada a ${h.asociada_a}`, ayuda: h.asociada_en ? `Reasignada ${hace(h.asociada_en)}` : undefined };
-  if (h.resuelve_a) return { texto: `Asociable a ${h.resuelve_a}`, ayuda: "La clave ya esta en el catalogo; falta reasignar la telemetria previa" };
-  return { texto: "Sin activo en el catalogo", ayuda: "Ningun activo tiene esta clave" };
+  if (h.resuelve_a) return { texto: `Asociable a ${h.resuelve_a}`, ayuda: "La clave ya esta en el catálogo; falta reasignar la telemetría previa" };
+  return { texto: "Sin activo en el catálogo", ayuda: "Ningún activo tiene esta clave" };
 }
 
 function TablaHuerfanos({ huerfanas }: { huerfanas: Huerfana[] }) {
@@ -129,23 +129,23 @@ function TablaHuerfanos({ huerfanas }: { huerfanas: Huerfana[] }) {
   return (
     <section className="panel panel-blanco" aria-labelledby="titulo-huerfanos">
       <h2 id="titulo-huerfanos">
-        Telemetria huerfana <span className="cuenta">{pendientes.length}</span>
+        Telemetría huérfana <span className="cuenta">{pendientes.length}</span>
       </h2>
-      <p className="nota">Origenes que enviaron datos que no se pudieron asociar a ningun activo. El volumen es lo acumulado desde la primera recepcion.</p>
+      <p className="nota">Orígenes que enviaron datos que no se pudieron asociar a ningún activo. El volumen es lo acumulado desde la primera recepción.</p>
       {huerfanas.length === 0 ? (
-        <SinDatos titulo="Sin huerfanos" detalle="Toda la telemetria recibida se asocio a un activo del catalogo." />
+        <SinDatos titulo="Sin huérfanos" detalle="Toda la telemetría recibida se asoció a un activo del catálogo." />
       ) : (
         <div className="tabla-contenedor">
           <table className="tabla">
-            <caption className="solo-lector">Origenes huerfanos, el de recepcion mas reciente primero</caption>
+            <caption className="solo-lector">Orígenes huérfanos, el de recepción más reciente primero</caption>
             <thead>
               <tr>
                 <th scope="col">Origen</th>
                 <th scope="col">Proveedor declarado</th>
                 <th scope="col">Volumen</th>
-                <th scope="col">Ultima recepcion</th>
+                <th scope="col">Última recepción</th>
                 <th scope="col">Desde</th>
-                <th scope="col">Situacion</th>
+                <th scope="col">Situación</th>
               </tr>
             </thead>
             <tbody>
@@ -159,7 +159,7 @@ function TablaHuerfanos({ huerfanas }: { huerfanas: Huerfana[] }) {
                     </th>
                     <td>{h.proveedor ? datosProveedor(h.proveedor).nombre : <span className="apagado">no lo declara</span>}</td>
                     <td>
-                      {entero(h.metricas)} metricas
+                      {entero(h.metricas)} métricas
                       <span className="meta-dato">
                         {entero(h.registros)} registros · {entero(h.trazas)} trazas
                       </span>
@@ -190,19 +190,19 @@ function TablaDescubrimiento({ d }: { d: Descubrimientos }) {
   const ultimas = d.ultimas.slice().sort((a, b) => a.proveedor.localeCompare(b.proveedor));
   return (
     <section className="panel panel-blanco" aria-labelledby="titulo-descubrimiento">
-      <h2 id="titulo-descubrimiento">Ultima pasada del descubrimiento</h2>
+      <h2 id="titulo-descubrimiento">Última pasada del descubrimiento</h2>
       {ultimas.length === 0 ? (
-        <SinDatos titulo="El descubrimiento no ha corrido" detalle="No hay ninguna ejecucion registrada para ningun proveedor." />
+        <SinDatos titulo="El descubrimiento no ha corrido" detalle="No hay ninguna ejecución registrada para ningún proveedor." />
       ) : (
         <div className="tabla-contenedor">
           <table className="tabla">
-            <caption className="solo-lector">La ultima ejecucion del descubrimiento en cada proveedor</caption>
+            <caption className="solo-lector">La última ejecución del descubrimiento en cada proveedor</caption>
             <thead>
               <tr>
                 <th scope="col">Proveedor</th>
                 <th scope="col">Resultado</th>
-                <th scope="col">Empezo</th>
-                <th scope="col">Duro</th>
+                <th scope="col">Empezó</th>
+                <th scope="col">Duró</th>
                 <th scope="col">Vistos</th>
                 <th scope="col">Nuevos</th>
                 <th scope="col">Retirados</th>
@@ -243,7 +243,7 @@ function Cifras({ fuentes, huerfanas, d }: { fuentes: Fuente[] | null; huerfanas
   const cifras = [
     { n: propias?.filter((f) => f.estado === "degradado").length, texto: "Fuentes degradadas" },
     { n: propias?.filter((f) => f.estado === "sin_datos").length, texto: "Sin datos nunca" },
-    { n: huerfanas?.filter((h) => !h.asociada_a).length, texto: "Origenes huerfanos" },
+    { n: huerfanas?.filter((h) => !h.asociada_a).length, texto: "Orígenes huérfanos" },
     { n: d?.ultimas.filter((e) => e.estado === "error").length, texto: "Proveedores con descubrimiento fallido" },
   ];
   return (
@@ -269,7 +269,7 @@ export default function Fuentes() {
       <SegunCarga r={f} que="las fuentes">
         {(x) => <TablaFuentes fuentes={x} />}
       </SegunCarga>
-      <SegunCarga r={h} que="los huerfanos">
+      <SegunCarga r={h} que="los huérfanos">
         {(x) => <TablaHuerfanos huerfanas={x} />}
       </SegunCarga>
       <SegunCarga r={d} que="el descubrimiento">

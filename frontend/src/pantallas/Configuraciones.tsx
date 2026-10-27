@@ -15,7 +15,7 @@ import { useCarga } from "../useCarga";
 // muestra con su identificador hasta que se agregue aqui.
 const REGLA: Record<string, string> = {
   "puerto-expuesto-no-esperado": "Puerto expuesto no esperado",
-  "version-agente-distinta": "Version del agente distinta",
+  "version-agente-distinta": "Versión del agente distinta",
   "intervalo-muestreo-distinto": "Intervalo de muestreo distinto",
   "contenedor-como-root": "Contenedor como root",
   "imagen-version-distinta": "Imagen en versiones distintas",
@@ -79,11 +79,11 @@ function Contenido({ hallazgos }: { hallazgos: Hallazgo[] }) {
           </label>
         </form>
         {visibles.length === 0 ? (
-          <p>Ningun hallazgo con esos filtros.</p>
+          <p>Ningún hallazgo con esos filtros.</p>
         ) : (
           <div className="tabla-contenedor">
             <table className="tabla">
-              <caption className="solo-lector">Hallazgos de configuracion, los mas severos primero</caption>
+              <caption className="solo-lector">Hallazgos de configuración, los más severos primero</caption>
               <thead>
                 <tr>
                   <th scope="col">Severidad</th>
@@ -120,7 +120,7 @@ function Contenido({ hallazgos }: { hallazgos: Hallazgo[] }) {
             </table>
           </div>
         )}
-        <p className="nota">Instantanea mas reciente: {fechaHora(ultima)}</p>
+        <p className="nota">Instantánea más reciente: {fechaHora(ultima)}</p>
       </section>
     </>
   );
@@ -129,7 +129,7 @@ function Contenido({ hallazgos }: { hallazgos: Hallazgo[] }) {
 export default function Configuraciones() {
   const r = useCarga((s) => api.configuraciones(s), [], 60_000);
   return (
-    <Marco titulo="Configuracion">
+    <Marco titulo="Configuración">
       <SegunCarga r={r} que="el reporte de configuraciones">
         {(hallazgos) => <Contenido hallazgos={hallazgos} />}
       </SegunCarga>

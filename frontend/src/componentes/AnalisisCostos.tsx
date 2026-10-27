@@ -51,10 +51,10 @@ function Subutilizados({ a }: { a: Analisis }) {
       </h2>
       <p className="criterio">
         <strong>Criterio:</strong> se marca subutilizado un activo con costo en el periodo, al menos {c.horas_minimas} h de uso medidas,
-        CPU promedio menor a {porcentaje(c.cpu_promedio_max)}, ninguna hora con CPU de {porcentaje(c.cpu_pico_max)} o mas, y memoria
+        CPU promedio menor a {porcentaje(c.cpu_promedio_max)}, ninguna hora con CPU de {porcentaje(c.cpu_pico_max)} o más, y memoria
         promedio menor a {porcentaje(c.memoria_promedio_max)}. Uso tomado del resumen por hora.
       </p>
-      {!a.uso.disponible && <p className="mensaje-error">El almacen de series no respondio: no se pudo medir el uso, solo se muestra el costo.</p>}
+      {!a.uso.disponible && <p className="mensaje-error">El almacén de series no respondió: no se pudo medir el uso, solo se muestra el costo.</p>}
       {a.activos.length === 0 ? (
         <SinDatos titulo="Nada que cruzar" detalle="No hay costos ni uso medido en el periodo." />
       ) : (
@@ -63,7 +63,7 @@ function Subutilizados({ a }: { a: Analisis }) {
             <caption className="solo-lector">Costo y uso de cada activo, los subutilizados primero</caption>
             <thead>
               <tr>
-                <th scope="col">Situacion</th>
+                <th scope="col">Situación</th>
                 <th scope="col">Activo</th>
                 <th scope="col">Entorno</th>
                 <th scope="col" className="numero">
@@ -73,7 +73,7 @@ function Subutilizados({ a }: { a: Analisis }) {
                   CPU promedio
                 </th>
                 <th scope="col" className="numero">
-                  Hora de mas CPU
+                  Hora de más CPU
                 </th>
                 <th scope="col" className="numero">
                   Memoria promedio
@@ -141,7 +141,7 @@ function TablaTendencia({
                 {nombreMes(m)}
               </th>
             ))}
-            <th scope="col">Ultimo mes contra el anterior</th>
+            <th scope="col">Último mes contra el anterior</th>
           </tr>
         </thead>
         <tbody>

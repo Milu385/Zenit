@@ -41,7 +41,7 @@ function piezas(d: Detalle): Pieza[] {
       metrica: e.metrica,
       desde: legible ? e.desde : desde,
       hasta: legible ? e.hasta : hasta,
-      origen: "Citada por la hipotesis",
+      origen: "Citada por la hipótesis",
       observacion: e.observacion,
       aproximada: !legible,
     };
@@ -53,7 +53,7 @@ function piezas(d: Detalle): Pieza[] {
       metrica: m,
       desde,
       hasta,
-      origen: m === d.metrica ? "La metrica que se desvio" : "Relacionada, segun el detector",
+      origen: m === d.metrica ? "La métrica que se desvió" : "Relacionada, según el detector",
     }));
   return [...citadas, ...detector];
 }
@@ -126,7 +126,7 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
     } catch (e) {
       setError(
         e instanceof ErrorApi && e.estado === 409
-          ? "Este incidente ya estaba cerrado o descartado. Recarga la pagina para ver su estado actual."
+          ? "Este incidente ya estaba cerrado o descartado. Recarga la página para ver su estado actual."
           : `No se pudo marcar: ${e instanceof Error ? e.message : e}`,
       );
     } finally {
@@ -144,10 +144,10 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
     } catch (e) {
       setError(
         e instanceof ErrorApi && e.estado === 403
-          ? "Tu rol no puede pedir diagnosticos."
+          ? "Tu rol no puede pedir diagnósticos."
           : e instanceof ErrorApi && (e.estado === 404 || e.estado === 405)
-            ? "El servicio de diagnostico todavia no esta disponible. La evidencia de abajo no depende de el."
-            : `No se pudo pedir la hipotesis: ${e instanceof Error ? e.message : e}`,
+            ? "El servicio de diagnóstico todavía no esta disponible. La evidencia de abajo no depende de el."
+            : `No se pudo pedir la hipótesis: ${e instanceof Error ? e.message : e}`,
       );
     } finally {
       setPidiendo(false);
@@ -180,7 +180,7 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
           </p>
           <h2>{tituloIncidente(d)}</h2>
           <p className="meta">
-            En <Enlace a={`/activos/${encodeURIComponent(d.activo)}`}>{d.activo}</Enlace> · empezo {fechaHora(d.inicio)} ({hace(d.inicio)})
+            En <Enlace a={`/activos/${encodeURIComponent(d.activo)}`}>{d.activo}</Enlace> · empezó {fechaHora(d.inicio)} ({hace(d.inicio)})
             · {sigue ? "dura" : "duro"} {duracion(d.inicio, finEfectivo)}
             {sigue ? " y sigue" : ""} · puntaje {numeroCorto(d.puntaje)}
           </p>
@@ -208,10 +208,10 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
       </p>
 
       <section className="panel panel-blanco anomalia" aria-labelledby="titulo-anomalia">
-        <h3 id="titulo-anomalia">Que se desvio</h3>
+        <h3 id="titulo-anomalia">Qué se desvió</h3>
         <dl className="cifras-anomalia">
           <div>
-            <dt>Metrica</dt>
+            <dt>Métrica</dt>
             <dd>
               {nombreMetrica(d.metrica)}
               {dims.length > 0 && <span className="meta-dato">{dims.map(([k, v]) => `${k}=${v}`).join(", ")}</span>}
@@ -234,21 +234,21 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
           </div>
         </dl>
         <p className="meta">
-          Metodo del detector: {ev.metodo}
-          {d.version_modelo && d.version_modelo !== ev.metodo ? ` · version ${d.version_modelo}` : ""}
+          Método del detector: {ev.metodo}
+          {d.version_modelo && d.version_modelo !== ev.metodo ? ` · versión ${d.version_modelo}` : ""}
         </p>
       </section>
 
       <div className="rejilla-incidente">
         <section className="panel panel-azul hipotesis" aria-labelledby="titulo-hipotesis">
           <div className="hipotesis-cabecera">
-            <h3 id="titulo-hipotesis">Hipotesis de Zenit</h3>
+            <h3 id="titulo-hipotesis">Hipótesis de Zenit</h3>
           </div>
           {d.diagnostico ? (
             <>
               <p className="hipotesis-texto">{d.diagnostico.texto}</p>
               <p className="advertencia">
-                Es una posible explicacion generada por un modelo, no una conclusion. Revisa la evidencia antes de actuar.
+                Es una posible explicación generada por un modelo, no una conclusión. Revisa la evidencia antes de actuar.
               </p>
               {citadas > 0 && (
                 <>
@@ -275,13 +275,13 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
           ) : (
             <p className="hipotesis-texto">
               {enCola
-                ? "La hipotesis esta en cola. Esta pagina la muestra cuando llegue."
-                : "Todavia no hay una hipotesis para este incidente. La evidencia del detector esta al lado."}
+                ? "La hipótesis esta en cola. Esta página la muestra cuando llegue."
+                : "Todavía no hay una hipótesis para este incidente. La evidencia del detector está al lado."}
             </p>
           )}
           {gestiona && !enCola && (
             <button type="button" className="boton-secundario" disabled={pidiendo} onClick={() => void pedirDiagnostico()}>
-              {pidiendo ? "Pidiendo..." : d.diagnostico ? "Generar otra hipotesis" : "Pedir hipotesis"}
+              {pidiendo ? "Pidiendo..." : d.diagnostico ? "Generar otra hipótesis" : "Pedir hipótesis"}
             </button>
           )}
         </section>
@@ -314,7 +314,7 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
             ))}
           </ol>
           <p className="nota">
-            <a href="#titulo-ev-senales">Registros y trazas de la ventana, mas abajo ↓</a>
+            <a href="#titulo-ev-senales">Registros y trazas de la ventana, más abajo ↓</a>
           </p>
         </section>
       </div>
@@ -363,7 +363,7 @@ export default function DetalleIncidente({ id }: { id: string }) {
   return (
     <Marco titulo={`Incidente ${valido ? n : ""}`}>
       {!valido ? (
-        <ErrorVista mensaje={`"${id}" no es un numero de incidente.`} />
+        <ErrorVista mensaje={`"${id}" no es un número de incidente.`} />
       ) : (
         <SegunCarga r={r} que="el incidente">
           {(d) =>
