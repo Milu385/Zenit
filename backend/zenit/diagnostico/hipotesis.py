@@ -32,6 +32,9 @@ from zenit.diagnostico.persistencia import guardar_diagnostico
 
 log = logging.getLogger("zenit.diagnostico")
 
+# Partes de la evidencia con texto crudo de registros, que no se guardan con el diagnostico
+TEXTO_CRUDO = ("registros_error", "correlacion")
+
 SISTEMA = """Eres el modulo de diagnostico de Zenit, una plataforma de observabilidad de infraestructura.
 Recibes la evidencia de un incidente que abrio un detector estadistico: la metrica que se desvio, \
 metricas relacionadas, registros de error y trazas con error del mismo activo, con su ventana de tiempo. \
@@ -244,8 +247,14 @@ def diagnosticar(conexion, anomalia_id: int, repositorio, analitico, cliente, *,
 
     generado = datetime.now(timezone.utc)
     detectada_en = anomalia.get("detectada_en")
+    # Minimizacion (Ley 1581 de 2012, art. 4; Decreto 1377 de 2013, art. 11):
+    # no se guarda el texto crudo de los registros. Los registros y trazas
+    # viven 7 dias en ClickHouse; si el diagnostico guardara su texto, quedaria
+    # en PostgreSQL sin plazo. Lo que queda es lo enviado, ya redactado, y los
+    # conteos. La evidencia completa se vuelve a pedir en vivo
+    # (GET /api/incidentes/{id}/evidencia) mientras ClickHouse la tenga.
     guardada = {
-        **ev,
+        **{k: v for k, v in ev.items() if k not in TEXTO_CRUDO},
         "enviado": enviado,                       # lo que salio de la plataforma, ya redactado (P-DIA-02)
         "citas_descartadas": hipotesis["descartadas"],
         "segundos_desde_deteccion": (round((generado - detectada_en).total_seconds(), 1)

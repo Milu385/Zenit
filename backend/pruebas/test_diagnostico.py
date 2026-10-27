@@ -232,6 +232,9 @@ def test_diagnosticar_guarda_la_hipotesis_lo_enviado_y_el_tiempo(pg):
         estado, guardada = cur.fetchone()
     assert estado == "diagnosticada"
     assert ACTIVO not in json.dumps(guardada["enviado"])
+    # minimizacion: el texto crudo de los registros no queda guardado, solo lo enviado (redactado)
+    assert "registros_error" not in guardada and "correlacion" not in guardada
+    assert "conteos" in guardada and "metricas" in guardada
     assert len(guardada["citas_descartadas"]) == 2
     assert 0 <= guardada["segundos_desde_deteccion"] < 600
 
