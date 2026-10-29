@@ -1,4 +1,5 @@
 import { api } from "../api";
+import { fechaDia, periodoDias } from "../formato";
 import { useCarga } from "../useCarga";
 import { SinDatos } from "./Estados";
 import SegunCarga from "./SegunCarga";
@@ -15,10 +16,15 @@ export default function ConsumoDiagnostico() {
     <section className="panel panel-blanco" aria-labelledby="titulo-consumo">
       <h2 id="titulo-consumo">Consumo del diagnóstico</h2>
       <SegunCarga r={r} que="el consumo del diagnóstico">
-        {(c) => (
+        {(c) => {
+          // con un solo modelo, y el mismo que esta configurado, la columna
+          // repetiria en cada fila lo que ya dice el subtitulo
+          const modelos = new Set(c.por_dia.map((d) => d.modelo));
+          const verModelo = modelos.size > 1 || (modelos.size === 1 && !modelos.has(c.modelo_configurado ?? ""));
+          return (
           <>
             <p className="nota">
-              Modelo configurado: <code>{c.modelo_configurado ?? "sin configurar"}</code> · {c.periodo.desde} a {c.periodo.hasta} (UTC)
+              Modelo configurado: <code>{c.modelo_configurado ?? "sin configurar"}</code> · {periodoDias(c.periodo.desde, c.periodo.hasta)} (UTC)
             </p>
             {c.por_dia.length === 0 ? (
               <SinDatos titulo="Todavía no hay diagnósticos" detalle="Cuando se genere una hipótesis, aquí se verán sus tokens." />
@@ -29,7 +35,7 @@ export default function ConsumoDiagnostico() {
                   <thead>
                     <tr>
                       <th scope="col">Día</th>
-                      <th scope="col">Modelo</th>
+                      {verModelo && <th scope="col">Modelo</th>}
                       <th scope="col" className="numero">
                         Diagnósticos
                       </th>
@@ -47,10 +53,12 @@ export default function ConsumoDiagnostico() {
                       .reverse()
                       .map((d) => (
                         <tr key={`${d.dia}|${d.modelo}`}>
-                          <td>{d.dia}</td>
-                          <td>
-                            <code>{d.modelo}</code>
-                          </td>
+                          <td>{fechaDia(d.dia)}</td>
+                          {verModelo && (
+                            <td>
+                              <code>{d.modelo}</code>
+                            </td>
+                          )}
                           <td className="numero">{entero(d.diagnosticos)}</td>
                           <td className="numero">{entero(d.tokens_entrada)}</td>
                           <td className="numero">{entero(d.tokens_salida)}</td>
@@ -61,9 +69,11 @@ export default function ConsumoDiagnostico() {
                     {c.por_modelo.map((t) => (
                       <tr key={t.modelo}>
                         <th scope="row">Total</th>
-                        <td>
-                          <code>{t.modelo}</code>
-                        </td>
+                        {verModelo && (
+                          <td>
+                            <code>{t.modelo}</code>
+                          </td>
+                        )}
                         <td className="numero">{entero(t.diagnosticos)}</td>
                         <td className="numero">{entero(t.tokens_entrada)}</td>
                         <td className="numero">{entero(t.tokens_salida)}</td>
@@ -74,7 +84,8 @@ export default function ConsumoDiagnostico() {
               </div>
             )}
           </>
-        )}
+          );
+        }}
       </SegunCarga>
     </section>
   );

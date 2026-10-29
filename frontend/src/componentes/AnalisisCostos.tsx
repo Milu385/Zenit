@@ -1,6 +1,6 @@
-import type { AnalisisCostos as Analisis, UsoActivo } from "../contrato";
+import type { Activo, AnalisisCostos as Analisis, UsoActivo } from "../contrato";
 import { Enlace } from "../enrutador";
-import { dinero, porcentaje } from "../formato";
+import { dinero, nombreEntorno, porcentaje } from "../formato";
 import { SinDatos } from "./Estados";
 
 // H-047, pantalla 6. Fuera del contrato (NOTAS.md).
@@ -8,6 +8,10 @@ import { SinDatos } from "./Estados";
 // por hora, con el criterio escrito arriba de la tabla. Es un dato para
 // revisar: no se sugiere apagar ni redimensionar nada.
 // Tendencia: el gasto de cada mes, por entorno y por activo.
+// Los activos se nombran como en el resto de la pantalla: el nombre del
+// inventario y el id debajo (si el inventario no cargo, solo el id).
+
+type Nombres = Map<string, string>;
 
 const MES = new Intl.DateTimeFormat("es-CO", { month: "short", year: "numeric", timeZone: "UTC" });
 const nombreMes = (m: string) => MES.format(new Date(`${m}-01T00:00:00Z`));
@@ -39,7 +43,7 @@ function Marca({ a }: { a: UsoActivo }) {
   );
 }
 
-function Subutilizados({ a }: { a: Analisis }) {
+function Subutilizados({ a, nombres }: { a: Analisis; nombres: Nombres }) {
   const c = a.criterio;
   const marcados = a.activos.filter((x) => x.subutilizado === true);
   return (
@@ -87,8 +91,12 @@ function Subutilizados({ a }: { a: Analisis }) {
                     <Marca a={x} />
                   </td>
                   <th scope="row">
-                    <Enlace a={`/activos/${encodeURIComponent(x.activo)}`}>{x.activo}</Enlace>
-                    <span className="detalle">entorno {x.entorno}</span>
+                    <Enlace a={`/activos/${encodeURIComponent(x.activo)}`}>{nombres.get(x.activo) ?? x.activo}</Enlace>
+                    <span className="detalle">
+                      {nombres.has(x.activo) && <span className="sin-partir">{x.activo}</span>}
+                      {nombres.has(x.activo) && <br />}
+                      Entorno {nombreEntorno(x.entorno)}
+                    </span>
                   </th>
                   <td className="numero">{dinero(x.costo, a.moneda)}</td>
                   <td className="numero">{porcentaje(x.cpu_promedio)}</td>
@@ -124,7 +132,7 @@ function TablaTendencia({
   titulo: string;
   columna: string;
   meses: string[];
-  filas: { nombre: string; enlace?: string; montos: number[] }[];
+  filas: { nombre: string; detalle?: string; enlace?: string; montos: number[] }[];
   moneda: string;
 }) {
   const maximo = Math.max(1e-9, ...filas.flatMap((f) => f.montos));
@@ -146,7 +154,10 @@ function TablaTendencia({
         <tbody>
           {filas.map((f) => (
             <tr key={f.nombre}>
-              <th scope="row">{f.enlace ? <Enlace a={f.enlace}>{f.nombre}</Enlace> : f.nombre}</th>
+              <th scope="row">
+                {f.enlace ? <Enlace a={f.enlace}>{f.nombre}</Enlace> : f.nombre}
+                {f.detalle && <span className="detalle">{f.detalle}</span>}
+              </th>
               {f.montos.map((v, i) => (
                 <td key={meses[i]} className="numero">
                   {dinero(v, moneda)}
@@ -164,7 +175,7 @@ function TablaTendencia({
   );
 }
 
-function Tendencia({ a }: { a: Analisis }) {
+function Tendencia({ a, nombres }: { a: Analisis; nombres: Nombres }) {
   const t = a.tendencia;
   return (
     <section className="panel panel-blanco" aria-labelledby="titulo-tendencia">
@@ -179,14 +190,19 @@ function Tendencia({ a }: { a: Analisis }) {
             columna="Entorno"
             meses={t.meses}
             moneda={a.moneda}
-            filas={t.por_entorno.map((e) => ({ nombre: e.entorno, montos: e.montos }))}
+            filas={t.por_entorno.map((e) => ({ nombre: nombreEntorno(e.entorno), montos: e.montos }))}
           />
           <TablaTendencia
             titulo="Por activo"
             columna="Activo"
             meses={t.meses}
             moneda={a.moneda}
-            filas={t.por_activo.map((x) => ({ nombre: x.activo, enlace: `/activos/${encodeURIComponent(x.activo)}`, montos: x.montos }))}
+            filas={t.por_activo.map((x) => ({
+              nombre: nombres.get(x.activo) ?? x.activo,
+              detalle: nombres.has(x.activo) ? x.activo : undefined,
+              enlace: `/activos/${encodeURIComponent(x.activo)}`,
+              montos: x.montos,
+            }))}
           />
         </>
       )}
@@ -194,11 +210,12 @@ function Tendencia({ a }: { a: Analisis }) {
   );
 }
 
-export default function AnalisisCostos({ a }: { a: Analisis }) {
+export default function AnalisisCostos({ a, activos }: { a: Analisis; activos?: Activo[] | null }) {
+  const nombres: Nombres = new Map(activos?.map((x) => [x.id, x.nombre]));
   return (
     <>
-      <Tendencia a={a} />
-      <Subutilizados a={a} />
+      <Tendencia a={a} nombres={nombres} />
+      <Subutilizados a={a} nombres={nombres} />
     </>
   );
 }

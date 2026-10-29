@@ -84,7 +84,7 @@ button { font: inherit; }
 /* sobre el amarillo, el gris y los colores de estado no llegan a 4,5:1 */
 .panel-amarillo .nota, .panel-amarillo .meta, .panel-amarillo .meta-dato { color: #3d3c39; }
 .panel-amarillo a { color: var(--tinta); }
-.panel-amarillo .severidad, .panel-amarillo .nivel, .panel-amarillo .texto-mal { background: #fff; padding: 0 6px; border-radius: 4px; }
+.panel-amarillo .nivel, .panel-amarillo .texto-mal { background: #fff; padding: 0 6px; border-radius: 4px; }
 .panel-amarillo :focus-visible { outline-color: var(--tinta); }
 .panel-blanco { background: #fff; border: 1.5px solid #e2e1dc; }   /* sobre el fondo blanco necesita borde */
 .panel-azul .panel-blanco { color: var(--tinta); }
@@ -192,17 +192,6 @@ button { font: inherit; }
 .rejilla-con-lateral > .columna-derecha { align-self: stretch; min-height: calc(100vh - 140px); display: flex; flex-direction: column; gap: 24px; padding: 20px 18px; border-radius: 10px; }
 .columna-derecha h2 { font-size: 18px; }
 .resumen-hibrido { border-radius: 10px; padding: 18px; }
-.servidores-visualizados ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.visualizado {
-  width: 100%; text-align: left; border: 0; border-radius: 10px; padding: 14px 18px; cursor: pointer;
-  background: var(--azul-claro); color: var(--tinta); display: flex; flex-direction: column; gap: 4px;
-}
-.visualizado:hover { background: #93b8fb; }
-.visualizado[aria-pressed="true"] { box-shadow: inset 0 0 0 3px #fff; }
-.visualizado.oculto { background: #dcdcdc; color: #555; }
-.visualizado-nombre { font-size: 17px; font-weight: 600; }
-.visualizado-meta { font-size: 12px; }
-.nota-columna { font-size: 13px; margin: 8px 0 0; }
 .resumen-hibrido ul { list-style: none; margin: 0; padding: 0; }
 .resumen-hibrido li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1.5px solid #9a9a9a; }
 .resumen-hibrido li:last-child { border-bottom: 0; }
@@ -476,7 +465,7 @@ button { font: inherit; }
 
 /* --- bloques: mismo radio y mismo aire interior */
 .panel, .grupo-estado, .cifras li, .cabecera-incidente, .tabla-contenedor,
-.rejilla-con-lateral > .columna-derecha, .resumen-hibrido, .visualizado { border-radius: var(--radio); }
+.rejilla-con-lateral > .columna-derecha, .resumen-hibrido { border-radius: var(--radio); }
 .panel { padding: 20px 24px; }
 .panel-blanco { border-color: var(--borde-suave); }
 .panel h2, .panel > h3:first-child, .registros-cabecera h3 { font-size: 20px; font-weight: 700; line-height: 1.25; margin: 0 0 12px; }
@@ -538,7 +527,7 @@ button { font: inherit; }
   .rejilla-con-lateral { grid-template-columns: minmax(0, 1fr) 264px; }
   .rejilla-con-lateral > .columna-derecha { padding: 16px 14px; gap: 18px; }
   .resumen-hibrido { padding: 14px; }
-  .resumen-nombre, .visualizado-nombre { font-size: 15px; }
+  .resumen-nombre { font-size: 15px; }
   .columna-derecha h2 { font-size: 17px; }
   .chip { padding: 5px 12px; font-size: 13px; }
   .filtros-chips { gap: 6px; }
@@ -632,3 +621,100 @@ button { font: inherit; }
   background: transparent; color: #fff; font-size: 12px; cursor: pointer;
 }
 .boton-salir:hover { border-color: var(--amarillo); color: var(--amarillo); }
+
+/* =====================================================================
+   Segunda pasada de distribucion (29 de octubre, tarde)
+   ===================================================================== */
+
+/* --- columna azul: mide lo que su contenido y acompana al bajar, en vez de
+   estirarse hasta el final de la pagina con azul vacio */
+.rejilla-con-lateral > .columna-derecha {
+  align-self: start; min-height: 0; position: sticky; top: 16px;
+  max-height: calc(100vh - 32px); overflow-y: auto; scrollbar-width: thin;
+}
+@media (max-width: 1399px) {
+  .rejilla-con-lateral > .columna-derecha { position: static; max-height: none; overflow: visible; }
+}
+
+/* --- inventario hibrido como filtro por proveedor (antes, ademas, el bloque
+   "Servidores visualizados" repetia la misma lista) */
+.resumen-hibrido li.resumen-con-boton { padding: 0; }
+.resumen-fila {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 10px 8px; margin: 0 -8px; width: calc(100% + 16px); border: 0; border-radius: 8px;
+  background: transparent; color: inherit; text-align: left; cursor: pointer;
+}
+.resumen-fila:hover { background: #f1f0ec; }
+.resumen-fila[aria-pressed="true"] { background: #e3ecfe; box-shadow: inset 3px 0 0 var(--azul-panel); }
+.resumen-fila.atenuada { opacity: 0.5; }
+.resumen-fila.atenuada:hover { opacity: 0.85; }
+.nota-filtro { margin: 10px 0 0; font-size: 12px; }
+
+/* --- severidad: etiqueta rellena, como los estados; ya no parece un enlace */
+.severidad {
+  display: inline-flex; align-items: center; padding: 1px 9px; border-radius: 999px; font-size: 12px;
+  font-weight: 600; line-height: 1.6; white-space: nowrap; text-decoration: none; border: 1.5px solid transparent;
+}
+.severidad-alta { background: var(--mal); color: #fff; text-decoration: none; }
+.severidad-media { background: #fff; color: var(--regular); border-color: var(--regular); }
+.severidad-baja { background: #fff; color: var(--apagado); border-color: #b9b8b2; }
+
+/* --- enlaces: subrayado fino y separado del texto; se marca al pasar */
+.contenido-pagina a {
+  text-decoration-line: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  transition: text-decoration-color 0.15s;
+}
+.contenido-pagina a:hover { text-decoration-color: currentColor; text-decoration-thickness: 2px; }
+.contenido-pagina .tabla a { font-weight: 600; }
+.volver, .contenido-pagina .volver { text-decoration: none; }
+.tarjeta-activo, .contenido-pagina .tarjeta-activo { text-decoration: none; }
+
+/* --- incidentes: la accion de la fila no compite con el titulo */
+.boton-fila {
+  border: 1.5px solid rgba(0, 0, 0, 0.3); background: rgba(255, 255, 255, 0.55); color: var(--tinta);
+  border-radius: 999px; padding: 4px 12px; font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap;
+}
+.boton-fila:hover { background: #fff; border-color: var(--negro); }
+.boton-fila:disabled { opacity: 0.6; cursor: progress; }
+
+/* --- detalle del incidente: la hipotesis mide lo que su texto; la
+   evidencia en dos tandas, la del detector mas compacta */
+.rejilla-incidente { align-items: start; }
+.tanda-evidencia + .tanda-evidencia { margin-top: 14px; }
+.tanda-titulo { margin: 0 0 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #3d3c39; }
+.panel h4.tanda-titulo { margin: 0 0 8px; padding: 0; border: 0; font-size: 12px; }
+.item-evidencia-compacta { padding: 7px 12px; align-items: center; }
+.item-evidencia-compacta .numero { width: 22px; height: 22px; font-size: 12px; background: #3d3c39; }
+.item-evidencia-compacta .tipo { font-size: 11px; }
+.item-evidencia-compacta .descripcion { font-size: 13px; }
+
+/* --- costos: barras horizontales, nombre | barra | monto */
+.barras-h { list-style: none; margin: 8px 0 12px; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.barras-h li { display: grid; grid-template-columns: minmax(90px, 30%) 1fr auto; align-items: center; gap: 12px; font-size: 14px; }
+.barras-h-nombre { font-weight: 600; overflow-wrap: anywhere; }
+.barras-h-pista { height: 12px; border-radius: 999px; background: rgba(0, 0, 0, 0.1); overflow: hidden; }
+.barras-h-pista span { display: block; height: 100%; border-radius: inherit; background: var(--azul-panel); }
+.barras-h-valor { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.barras-h-parte { font-weight: 400; color: var(--gris); }
+.panel-amarillo .barras-h-parte { color: #3d3c39; }
+.distribucion .meta { margin: -6px 0 4px; }
+.distribucion .nota { margin-bottom: 0; }
+/* el nombre del archivo debajo del boton, entero */
+.campo-archivo { flex-wrap: wrap; row-gap: 4px; }
+.nombre-archivo { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; padding: 0 4px 2px; }
+
+/* --- fuentes: historial plegado debajo de la ultima pasada */
+.plegable { margin-top: 14px; border-top: 1px solid var(--linea); padding-top: 12px; }
+.plegable > summary { cursor: pointer; font-weight: 600; font-size: 14px; color: var(--azul-oscuro); width: fit-content; }
+.plegable > summary:hover { text-decoration: underline; }
+.plegable[open] > summary { margin-bottom: 4px; }
+
+/* --- configuracion: un activo por renglon, nombre y id */
+.lista-activos-celda { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.panel-amarillo .severidad { padding: 1px 9px; border-radius: 999px; }
+.contenido-pagina .chip, .contenido-pagina .chip:hover { text-decoration: none; }
+.contenido-pagina .chip:hover { border-color: var(--negro); }
+.resumen-hibrido .nota-filtro { color: var(--gris); }
+.tabla .detalle .sin-partir { white-space: nowrap; }
+.lista-activos-celda .detalle { white-space: nowrap; }

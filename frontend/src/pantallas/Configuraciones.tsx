@@ -5,7 +5,8 @@ import { SinDatos } from "../componentes/Estados";
 import { InsigniaSeveridad } from "../componentes/Insignias";
 import Marco from "../componentes/Marco";
 import SegunCarga from "../componentes/SegunCarga";
-import type { Hallazgo, Severidad } from "../contrato";
+import type { Activo, Hallazgo, Severidad } from "../contrato";
+import { Enlace } from "../enrutador";
 import { fechaHora, hace, SEVERIDAD } from "../formato";
 import { useCarga } from "../useCarga";
 
@@ -22,7 +23,10 @@ const REGLA: Record<string, string> = {
   "imagen-version-distinta": "Imagen en versiones distintas",
 };
 
-function Contenido({ hallazgos }: { hallazgos: Hallazgo[] }) {
+function Contenido({ hallazgos, activos }: { hallazgos: Hallazgo[]; activos: Activo[] | null }) {
+  // el nombre del inventario y el id debajo, como en el resto de pantallas;
+  // si el inventario no cargo, solo el id
+  const nombres = new Map(activos?.map((a) => [a.id, a.nombre]));
   const [severidad, setSeveridad] = useState<Severidad | "">("");
   const [entorno, setEntorno] = useState("");
   if (hallazgos.length === 0)
@@ -104,7 +108,16 @@ function Contenido({ hallazgos }: { hallazgos: Hallazgo[] }) {
                       {REGLA[h.regla] ?? h.regla}
                       <span className="detalle">{h.detalle}</span>
                     </th>
-                    <td>{h.activos.join(", ")}</td>
+                    <td>
+                      <ul className="lista-activos-celda">
+                        {h.activos.map((id) => (
+                          <li key={id}>
+                            <Enlace a={`/activos/${encodeURIComponent(id)}`}>{nombres.get(id) ?? id}</Enlace>
+                            {nombres.has(id) && <span className="detalle">{id}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    </td>
                     <td>
                       <span className="entornos">
                         {h.entornos.map((e) => (
@@ -129,11 +142,13 @@ function Contenido({ hallazgos }: { hallazgos: Hallazgo[] }) {
 
 export default function Configuraciones() {
   const r = useCarga((s) => api.configuraciones(s), [], 60_000);
+  const inv = useCarga((s) => api.activos(s), []);
+  const activos = inv.carga.estado === "listo" ? inv.carga.datos : null;
   return (
     <Marco titulo="Configuración">
-      <ConColumna>
+      <ConColumna activos={activos ?? undefined}>
         <SegunCarga r={r} que="el reporte de configuraciones">
-          {(hallazgos) => <Contenido hallazgos={hallazgos} />}
+          {(hallazgos) => <Contenido hallazgos={hallazgos} activos={activos} />}
         </SegunCarga>
       </ConColumna>
     </Marco>

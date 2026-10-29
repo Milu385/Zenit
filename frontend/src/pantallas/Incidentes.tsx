@@ -160,7 +160,7 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
                     {puede("incidentes:gestionar") && ABIERTO.includes(i.estado) && (
                       <button
                         type="button"
-                        className="boton-secundario"
+                        className="boton-fila"
                         disabled={marcando === i.id}
                         onClick={() => void falsoPositivo(i)}
                         aria-label={`Marcar el incidente ${i.id} como falso positivo`}

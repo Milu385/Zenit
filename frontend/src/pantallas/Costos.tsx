@@ -7,7 +7,7 @@ import Marco from "../componentes/Marco";
 import SegunCarga from "../componentes/SegunCarga";
 import type { Activo, Proveedor, ReporteCostos, ResumenImportacion } from "../contrato";
 import { Enlace } from "../enrutador";
-import { datosProveedor, dinero } from "../formato";
+import { datosProveedor, dinero, nombreEntorno, periodoDias } from "../formato";
 import { useSesion } from "../sesion";
 import { useCarga } from "../useCarga";
 
@@ -112,7 +112,7 @@ function Reporte({ r, activos }: { r: ReporteCostos; activos: Activo[] | null })
   if (r.por_activo.length === 0 && r.sin_asignar === 0)
     return (
       <SinDatos
-        titulo={`No hay cargos entre ${r.periodo.desde} y ${r.periodo.hasta}`}
+        titulo={`No hay cargos en ${periodoDias(r.periodo.desde, r.periodo.hasta)}`}
         detalle="Importa la factura del proveedor o cambia el periodo."
       />
     );
@@ -163,7 +163,7 @@ function Reporte({ r, activos }: { r: ReporteCostos; activos: Activo[] | null })
                     {nombreDe.has(a.activo) && <span className="detalle">{a.activo}</span>}
                   </th>
                   <td>{datosProveedor(a.proveedor).nombre}</td>
-                  {activos && <td>{entornoDe.get(a.activo) ?? "fuera del catálogo"}</td>}
+                  {activos && <td>{entornoDe.has(a.activo) ? nombreEntorno(entornoDe.get(a.activo)!) : "Fuera del catálogo"}</td>}
                   <td className="numero">{dinero(a.costo, r.moneda)}</td>
                   <td>{a.fuente}</td>
                 </tr>
@@ -181,14 +181,18 @@ function Reporte({ r, activos }: { r: ReporteCostos; activos: Activo[] | null })
 
       <div className="rejilla-dos">
         <Distribucion
+          titulo="Distribución del gasto"
+          subtitulo="Por proveedor"
           filas={porProveedor.map(([k, v]) => [k === "desconocido" ? "Desconocido" : datosProveedor(k).nombre, v])}
           moneda={r.moneda}
+          clase="panel-amarillo"
         />
         {porEntorno && (
-          <Totales
+          <Distribucion
             titulo="Por entorno"
-            filas={porEntorno.map(([k, v]) => [k === "desconocido" ? "Fuera del catálogo" : k, v])}
+            filas={porEntorno.map(([k, v]) => [k === "desconocido" ? "Fuera del catálogo" : nombreEntorno(k), v])}
             moneda={r.moneda}
+            clase="panel-blanco"
           />
         )}
       </div>
@@ -196,43 +200,43 @@ function Reporte({ r, activos }: { r: ReporteCostos; activos: Activo[] | null })
   );
 }
 
-// "Distribucion del gasto" del wireframe: una barra por proveedor, con el
-// monto escrito encima (la barra sola no dice cuanto es).
-function Distribucion({ filas, moneda }: { filas: [string, number][]; moneda: string }) {
+// "Distribucion del gasto" del wireframe, como barras horizontales: el
+// nombre a la izquierda, la barra y el monto escrito (la barra sola no dice
+// cuanto es). Con uno o dos proveedores ya no queda una columna enorme sola.
+function Distribucion({
+  titulo,
+  subtitulo,
+  filas,
+  moneda,
+  clase,
+}: {
+  titulo: string;
+  subtitulo?: string;
+  filas: [string, number][];
+  moneda: string;
+  clase: string;
+}) {
   const maximo = Math.max(...filas.map(([, v]) => v), 0);
+  const total = filas.reduce((n, [, v]) => n + v, 0);
+  const id = `titulo-${titulo.toLowerCase().replace(/[^a-z]+/g, "-")}`;
   return (
-    <section className="panel panel-amarillo distribucion" aria-labelledby="titulo-distribucion">
-      <h2 id="titulo-distribucion">Distribución del gasto</h2>
-      <ul className="barras" aria-label="Costo atribuido por proveedor">
+    <section className={`panel ${clase} distribucion`} aria-labelledby={id}>
+      <h2 id={id}>{titulo}</h2>
+      {subtitulo && <p className="meta">{subtitulo}</p>}
+      <ul className="barras-h">
         {filas.map(([k, v]) => (
           <li key={k}>
-            <span className="barras-valor">{dinero(v, moneda)}</span>
-            <span className="barras-columna" aria-hidden="true">
-              <span style={{ height: `${maximo > 0 ? Math.max(2, (v / maximo) * 100) : 0}%` }} />
+            <span className="barras-h-nombre">{k}</span>
+            <span className="barras-h-pista" aria-hidden="true">
+              <span style={{ width: `${maximo > 0 ? Math.max(1.5, (v / maximo) * 100) : 0}%` }} />
             </span>
-            <span className="barras-nombre">{k}</span>
+            <span className="barras-h-valor">
+              {dinero(v, moneda)}
+              {total > 0 && filas.length > 1 && <span className="barras-h-parte"> · {Math.round((v / total) * 100)} %</span>}
+            </span>
           </li>
         ))}
       </ul>
-      <p className="nota">Por proveedor. Solo lo atribuido; lo sin asignar queda fuera.</p>
-    </section>
-  );
-}
-
-function Totales({ titulo, filas, moneda }: { titulo: string; filas: [string, number][]; moneda: string }) {
-  return (
-    <section className="panel panel-blanco">
-      <h2>{titulo}</h2>
-      <table className="tabla">
-        <tbody>
-          {filas.map(([k, v]) => (
-            <tr key={k}>
-              <th scope="row">{k}</th>
-              <td className="numero">{dinero(v, moneda)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
       <p className="nota">Solo lo atribuido; lo sin asignar queda fuera.</p>
     </section>
   );
@@ -304,7 +308,7 @@ export default function Costos() {
             {(datos) => (
               <>
                 <p className="meta">
-                  Periodo: {datos.periodo.desde} a {datos.periodo.hasta}
+                  Periodo: {periodoDias(datos.periodo.desde, datos.periodo.hasta)}
                   {!desde && !hasta ? " (por defecto: todo lo importado o, si no hay nada, el mes en curso)" : ""}
                 </p>
                 <Reporte r={datos} activos={activos} />
@@ -314,7 +318,7 @@ export default function Costos() {
         )}
         {!invertido && r.carga.estado === "listo" && (
           <SegunCarga r={an} que="la tendencia y el uso">
-            {(a) => <AnalisisCostos a={a} />}
+            {(a) => <AnalisisCostos a={a} activos={activos} />}
           </SegunCarga>
         )}
       </ConColumna>

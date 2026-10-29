@@ -82,6 +82,32 @@ export function rangoFechas(desde: string, hasta: string): string {
     : `${fechaHora(desde)} – ${fechaHora(hasta)}`;
 }
 
+/** Fecha de calendario (AAAA-MM-DD, sin hora): "29 oct 2026". Se lee como
+ * fecha local para que no se corra un dia por la zona horaria. */
+export function fechaDia(dia: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dia);
+  if (!m) return dia;
+  return `${Number(m[3])} ${MESES[Number(m[2]) - 1]} ${m[1]}`;
+}
+
+/** Periodo entre dos fechas de calendario: "1–30 sep 2026", "1 sep – 5 oct 2026". */
+export function periodoDias(desde: string, hasta: string): string {
+  const a = /^(\d{4})-(\d{2})-(\d{2})$/.exec(desde);
+  const b = /^(\d{4})-(\d{2})-(\d{2})$/.exec(hasta);
+  if (!a || !b) return `${desde} a ${hasta}`;
+  if (desde === hasta) return fechaDia(desde);
+  if (a[1] === b[1] && a[2] === b[2]) return `${Number(a[3])}–${Number(b[3])} ${MESES[Number(a[2]) - 1]} ${a[1]}`;
+  if (a[1] === b[1]) return `${Number(a[3])} ${MESES[Number(a[2]) - 1]} – ${fechaDia(hasta)}`;
+  return `${fechaDia(desde)} – ${fechaDia(hasta)}`;
+}
+
+/** "plataforma" -> "Plataforma"; los entornos vienen en minuscula del catalogo. */
+export const capital = (t: string) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
+
+/** Nombre legible de un entorno: si se llama como un proveedor (aws, onprem)
+ * se escribe como el proveedor ("AWS", "On-premise"); si no, con mayuscula. */
+export const nombreEntorno = (e: string) => PROVEEDOR[e as Proveedor]?.nombre ?? capital(e);
+
 export const porcentaje = (v: number | null) => (v == null ? "sin dato" : `${Math.round(v * 100)} %`);
 
 export const dinero = (monto: number, moneda = "USD") =>

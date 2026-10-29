@@ -64,49 +64,6 @@ function TarjetaActivo({ a }: { a: Activo }) {
   );
 }
 
-// "Servidores visualizados" del wireframe: elegir un proveedor deja ver solo
-// sus activos (es el mismo filtro de proveedor de arriba); volver a pulsarlo
-// muestra todos otra vez.
-function ServidoresVisualizados({
-  activos,
-  elegido,
-  alElegir,
-}: {
-  activos: Activo[];
-  elegido: Proveedor | "";
-  alElegir: (p: Proveedor | "") => void;
-}) {
-  const proveedores = [...new Set(activos.map((a) => a.proveedor))].sort();
-  return (
-    <section className="servidores-visualizados" aria-labelledby="titulo-visualizados">
-      <h2 id="titulo-visualizados">Servidores visualizados</h2>
-      <ul>
-        {proveedores.map((p) => {
-          const nombres = activos.filter((a) => a.proveedor === p).map((a) => a.nombre);
-          const visible = !elegido || elegido === p;
-          return (
-            <li key={p}>
-              <button
-                type="button"
-                className={visible ? "visualizado" : "visualizado oculto"}
-                aria-pressed={elegido === p}
-                onClick={() => alElegir(elegido === p ? "" : p)}
-              >
-                <span className="visualizado-nombre">{datosProveedor(p).nombre}</span>
-                <span className="visualizado-meta">
-                  {nombres.slice(0, 2).join(", ")}
-                  {nombres.length > 2 ? ` y ${nombres.length - 2} más` : ""}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <p className="nota-columna">{elegido ? "Pulsa el proveedor otra vez para ver todos." : "Pulsa un proveedor para ver solo sus activos."}</p>
-    </section>
-  );
-}
-
 function Contenido({ activos }: { activos: Activo[] }) {
   const [proveedor, setProveedor] = useState<Proveedor | "">("");
   const [entorno, setEntorno] = useState("");
@@ -141,10 +98,7 @@ function Contenido({ activos }: { activos: Activo[] }) {
   const resto = conProblemas - nombrados.length;
 
   return (
-    <ConColumna
-      activos={activos}
-      lateral={<ServidoresVisualizados activos={activos} elegido={proveedor} alElegir={setProveedor} />}
-    >
+    <ConColumna activos={activos} filtro={{ elegido: proveedor, alElegir: setProveedor }}>
       <div className={`franja ${conProblemas ? "franja-alerta" : "franja-bien"}`} role="status">
         <span className="franja-punto" aria-hidden="true" />
         <span>

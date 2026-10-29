@@ -7,7 +7,7 @@ import SegunCarga from "../componentes/SegunCarga";
 import VistaSerie from "../componentes/VistaSerie";
 import type { DetalleActivo as Detalle } from "../contrato";
 import { Enlace } from "../enrutador";
-import { ABIERTO, dinero, ESTADO_ACTIVO, hace, porcentaje, datosProveedor, tituloIncidente } from "../formato";
+import { ABIERTO, dinero, ESTADO_ACTIVO, hace, periodoDias, porcentaje, datosProveedor, tituloIncidente } from "../formato";
 import { useSesion } from "../sesion";
 import { useCarga } from "../useCarga";
 
@@ -45,7 +45,7 @@ function CostoDelActivo({ activo }: { activo: string }) {
       <dd>
         {suyos.length ? dinero(total, moneda) : "sin cargos"}
         <span className="meta-dato">
-          {periodo.desde} a {periodo.hasta}
+          {periodoDias(periodo.desde, periodo.hasta)}
           {suyos.length ? ` · ${[...new Set(suyos.map((c) => c.fuente))].join(", ")}` : ""}
         </span>
       </dd>

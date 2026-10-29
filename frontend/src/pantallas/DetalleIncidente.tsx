@@ -288,31 +288,49 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
 
         <section className="panel panel-amarillo evidencia" aria-labelledby="titulo-evidencia">
           <h3 id="titulo-evidencia">Evidencia</h3>
-          <ol className="lista-evidencia">
-            {lista.map((p, i) => (
-              <li key={p.clave}>
-                <button
-                  id={`evidencia-${p.clave}`}
-                  type="button"
-                  className={p.clave === elegida ? "item-evidencia elegida" : "item-evidencia"}
-                  aria-pressed={p.clave === elegida}
-                  onClick={() => setElegida(p.clave)}
-                >
-                  <span className="numero" aria-hidden="true">
-                    {i + 1}
-                  </span>
-                  <span>
-                    <span className="tipo">{p.origen}</span>
-                    <span className="descripcion">
-                      {nombreMetrica(p.metrica)}, {rangoFechas(p.desde, p.hasta)}
-                      {p.aproximada ? " (la cita no trae intervalo; ventana del detector)" : ""}
-                    </span>
-                    {p.observacion && <span className="descripcion observacion">{p.observacion}</span>}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ol>
+          {/* dos tandas: lo que cita la hipotesis y lo que senalo el detector.
+              Las metricas del detector suelen repetir las citadas, por eso van
+              aparte y mas compactas; la numeracion sigue siendo una sola. */}
+          {[
+            { titulo: "Citadas por la hipótesis", citadas: true },
+            { titulo: citadas > 0 ? "Del detector" : null, citadas: false },
+          ].map((g) => {
+            const suyas = lista.filter((p) => p.clave.startsWith("citada-") === g.citadas);
+            if (suyas.length === 0) return null;
+            return (
+              <div key={String(g.citadas)} className="tanda-evidencia">
+                {g.titulo && <h4 className="tanda-titulo">{g.titulo}</h4>}
+                <ol className="lista-evidencia" start={lista.indexOf(suyas[0]) + 1}>
+                  {suyas.map((p) => {
+                    const i = lista.indexOf(p);
+                    return (
+                      <li key={p.clave}>
+                        <button
+                          id={`evidencia-${p.clave}`}
+                          type="button"
+                          className={`item-evidencia${g.citadas ? "" : " item-evidencia-compacta"}${p.clave === elegida ? " elegida" : ""}`}
+                          aria-pressed={p.clave === elegida}
+                          onClick={() => setElegida(p.clave)}
+                        >
+                          <span className="numero" aria-hidden="true">
+                            {i + 1}
+                          </span>
+                          <span>
+                            {g.citadas ? <span className="solo-lector">{p.origen}. </span> : <span className="tipo">{p.origen}</span>}
+                            <span className="descripcion">
+                              {nombreMetrica(p.metrica)}, {rangoFechas(p.desde, p.hasta)}
+                              {p.aproximada ? " (la cita no trae intervalo; ventana del detector)" : ""}
+                            </span>
+                            {p.observacion && <span className="descripcion observacion">{p.observacion}</span>}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
+            );
+          })}
           <p className="nota">
             <a href="#titulo-ev-senales">Registros y trazas de la ventana, más abajo ↓</a>
           </p>

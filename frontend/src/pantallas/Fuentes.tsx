@@ -232,18 +232,18 @@ const CABECERA_EJECUCION = (
 
 // Historial: las pasadas mas recientes de todos los proveedores juntos, la
 // mas nueva primero. Sirve para ver si un fallo es de una vez o se repite.
+// Va plegado debajo de la ultima pasada: casi siempre repite sus filas.
 function HistorialDescubrimiento({ d }: { d: Descubrimientos }) {
   const recientes = d.recientes.slice().sort((a, b) => b.inicio.localeCompare(a.inicio));
   if (recientes.length === 0) return null;
   const fallidas = recientes.filter((e) => e.estado === "error").length;
   return (
-    <section className="panel panel-blanco" aria-labelledby="titulo-historial">
-      <h2 id="titulo-historial">
-        Pasadas recientes del descubrimiento <span className="cuenta">{recientes.length}</span>
-      </h2>
-      <p className="nota">
-        Todos los proveedores, la más reciente primero{fallidas ? `; ${fallidas} ${fallidas === 1 ? "falló" : "fallaron"}` : ""}.
-      </p>
+    <details className="plegable">
+      <summary>
+        Ver historial: {recientes.length} {recientes.length === 1 ? "pasada reciente" : "pasadas recientes"}
+        {fallidas ? `, ${fallidas} ${fallidas === 1 ? "falló" : "fallaron"}` : ""}
+      </summary>
+      <p className="nota">Todos los proveedores, la más reciente primero.</p>
       <div className="tabla-contenedor tabla-alta">
         <table className="tabla">
           <caption className="solo-lector">Historial de ejecuciones del descubrimiento</caption>
@@ -255,7 +255,7 @@ function HistorialDescubrimiento({ d }: { d: Descubrimientos }) {
           </tbody>
         </table>
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -279,6 +279,7 @@ function TablaDescubrimiento({ d }: { d: Descubrimientos }) {
           </table>
         </div>
       )}
+      <HistorialDescubrimiento d={d} />
     </section>
   );
 }
@@ -319,12 +320,7 @@ export default function Fuentes() {
           {(x) => <TablaHuerfanos huerfanas={x} />}
         </SegunCarga>
         <SegunCarga r={d} que="el descubrimiento">
-          {(x) => (
-            <>
-              <TablaDescubrimiento d={x} />
-              <HistorialDescubrimiento d={x} />
-            </>
-          )}
+          {(x) => <TablaDescubrimiento d={x} />}
         </SegunCarga>
         {puede("diagnostico:consumo") && <ConsumoDiagnostico />}
       </ConColumna>
