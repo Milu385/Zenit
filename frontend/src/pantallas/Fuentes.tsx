@@ -1,4 +1,5 @@
 import { useState } from "react";
+import ConColumna from "../componentes/ColumnaDerecha";
 import ConsumoDiagnostico from "../componentes/ConsumoDiagnostico";
 import { api } from "../api";
 import { SinDatos } from "../componentes/Estados";
@@ -265,17 +266,19 @@ export default function Fuentes() {
   const d = useCarga((s) => api.descubrimientos(s), [], REFRESCO_MS);
   return (
     <Marco titulo="Fuentes">
-      <Cifras fuentes={listo(f)} huerfanas={listo(h)} d={listo(d)} />
-      <SegunCarga r={f} que="las fuentes">
-        {(x) => <TablaFuentes fuentes={x} />}
-      </SegunCarga>
-      <SegunCarga r={h} que="los huérfanos">
-        {(x) => <TablaHuerfanos huerfanas={x} />}
-      </SegunCarga>
-      <SegunCarga r={d} que="el descubrimiento">
-        {(x) => <TablaDescubrimiento d={x} />}
-      </SegunCarga>
-      {puede("diagnostico:consumo") && <ConsumoDiagnostico />}
+      <ConColumna>
+        <Cifras fuentes={listo(f)} huerfanas={listo(h)} d={listo(d)} />
+        <SegunCarga r={f} que="las fuentes">
+          {(x) => <TablaFuentes fuentes={x} />}
+        </SegunCarga>
+        <SegunCarga r={h} que="los huérfanos">
+          {(x) => <TablaHuerfanos huerfanas={x} />}
+        </SegunCarga>
+        <SegunCarga r={d} que="el descubrimiento">
+          {(x) => <TablaDescubrimiento d={x} />}
+        </SegunCarga>
+        {puede("diagnostico:consumo") && <ConsumoDiagnostico />}
+      </ConColumna>
     </Marco>
   );
 }

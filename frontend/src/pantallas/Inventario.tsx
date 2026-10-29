@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
+import ConColumna from "../componentes/ColumnaDerecha";
 import { SinDatos } from "../componentes/Estados";
 import Marco from "../componentes/Marco";
 import SegunCarga from "../componentes/SegunCarga";
@@ -63,42 +64,45 @@ function TarjetaActivo({ a }: { a: Activo }) {
   );
 }
 
-function ResumenHibrido({ activos }: { activos: Activo[] }) {
+// "Servidores visualizados" del wireframe: elegir un proveedor deja ver solo
+// sus activos (es el mismo filtro de proveedor de arriba); volver a pulsarlo
+// muestra todos otra vez.
+function ServidoresVisualizados({
+  activos,
+  elegido,
+  alElegir,
+}: {
+  activos: Activo[];
+  elegido: Proveedor | "";
+  alElegir: (p: Proveedor | "") => void;
+}) {
   const proveedores = [...new Set(activos.map((a) => a.proveedor))].sort();
   return (
-    <section className="panel panel-azul resumen-hibrido" aria-labelledby="titulo-hibrido">
-      <div className="panel-blanco">
-        <h2 id="titulo-hibrido">Inventario híbrido</h2>
-        <ul>
-          {proveedores.map((p) => {
-            const suyos = activos.filter((a) => a.proveedor === p);
-            return (
-              <li key={p}>
-                <span>
-                  <span className="resumen-nombre">{datosProveedor(p).nombre}</span>
-                  <span className="resumen-meta">
-                    {suyos.length} {suyos.length === 1 ? "activo" : "activos"}
-                  </span>
+    <section className="servidores-visualizados" aria-labelledby="titulo-visualizados">
+      <h2 id="titulo-visualizados">Servidores visualizados</h2>
+      <ul>
+        {proveedores.map((p) => {
+          const nombres = activos.filter((a) => a.proveedor === p).map((a) => a.nombre);
+          const visible = !elegido || elegido === p;
+          return (
+            <li key={p}>
+              <button
+                type="button"
+                className={visible ? "visualizado" : "visualizado oculto"}
+                aria-pressed={elegido === p}
+                onClick={() => alElegir(elegido === p ? "" : p)}
+              >
+                <span className="visualizado-nombre">{datosProveedor(p).nombre}</span>
+                <span className="visualizado-meta">
+                  {nombres.slice(0, 2).join(", ")}
+                  {nombres.length > 2 ? ` y ${nombres.length - 2} más` : ""}
                 </span>
-                <span
-                  className="cuadros"
-                  role="img"
-                  aria-label={ORDEN_ESTADO_ACTIVO.map(
-                    (e) => `${suyos.filter((a) => a.estado === e).length} ${ESTADO_ACTIVO[e].plural.toLowerCase()}`,
-                  ).join(", ")}
-                >
-                  {suyos
-                    .slice()
-                    .sort((x, y) => ORDEN_ESTADO_ACTIVO.indexOf(x.estado) - ORDEN_ESTADO_ACTIVO.indexOf(y.estado))
-                    .map((a) => (
-                      <span key={a.id} className={`cuadro cuadro-${a.estado}`} title={`${a.nombre}: ${ESTADO_ACTIVO[a.estado].texto}`} />
-                    ))}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="nota-columna">{elegido ? "Pulsa el proveedor otra vez para ver todos." : "Pulsa un proveedor para ver solo sus activos."}</p>
     </section>
   );
 }
@@ -127,83 +131,90 @@ function Contenido({ activos }: { activos: Activo[] }) {
   const grupos = ORDEN_ESTADO_ACTIVO.map((e) => ({ estado: e, lista: visibles.filter((a) => a.estado === e) }));
   // los retirados se muestran (marcados) pero no cuentan en el total vigente
   const vigentes = activos.filter((a) => a.estado !== "retirado").length;
-  const conProblemas = activos.filter((a) => REQUIERE_ATENCION.includes(a.estado)).length;
+  const problemas = activos
+    .filter((a) => REQUIERE_ATENCION.includes(a.estado))
+    .sort((x, y) => ORDEN_ESTADO_ACTIVO.indexOf(x.estado) - ORDEN_ESTADO_ACTIVO.indexOf(y.estado));
+  const conProblemas = problemas.length;
+  // como el wireframe ("Tu servidor Azure requiere atencion"): se nombran los
+  // activos, los peores primero, hasta tres
+  const nombrados = problemas.slice(0, 3).map((a) => a.nombre);
+  const resto = conProblemas - nombrados.length;
 
   return (
-    <div className="rejilla-con-lateral">
-      <div>
-        <div className={`franja ${conProblemas ? "franja-alerta" : "franja-bien"}`} role="status">
-          <span className="franja-punto" aria-hidden="true" />
-          <span>
-            <strong>
-              {conProblemas ? `${conProblemas} de ${vigentes} activos requieren atención` : `${vigentes} activos, operación estable`}
-            </strong>
-            <br />
-            {conProblemas
-              ? "Abajo, primero lo que dejó de reportar y después lo que tiene incidentes abiertos."
-              : "Todos los activos reportan y no tienen incidentes abiertos."}
-          </span>
-        </div>
-        <form className="filtros-inventario" onSubmit={(e) => e.preventDefault()} role="search">
-          <label>
-            Buscar
-            <input type="search" value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="nombre o id" />
-          </label>
-          <label>
-            Proveedor
-            <select value={proveedor} onChange={(e) => setProveedor(e.target.value as Proveedor | "")}>
-              <option value="">Todos</option>
-              {[...new Set(activos.map((a) => a.proveedor))].sort().map((p) => (
-                <option key={p} value={p}>
-                  {datosProveedor(p).nombre}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Entorno
-            <select value={entorno} onChange={(e) => setEntorno(e.target.value)}>
-              <option value="">Todos</option>
-              {entornos.map((x) => (
-                <option key={x} value={x}>
-                  {x}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Estado
-            <select value={estado} onChange={(e) => setEstado(e.target.value as EstadoActivo | "")}>
-              <option value="">Todos</option>
-              {ORDEN_ESTADO_ACTIVO.map((x) => (
-                <option key={x} value={x}>
-                  {ESTADO_ACTIVO[x].texto}
-                </option>
-              ))}
-            </select>
-          </label>
-        </form>
-        {visibles.length === 0 && <SinDatos titulo="Ningún activo coincide" detalle="Cambia la búsqueda o los filtros." />}
-        {grupos
-          .filter((g) => g.lista.length > 0)
-          .map(({ estado: e, lista }: { estado: EstadoActivo; lista: Activo[] }) => (
-            <section key={e} className={`grupo-estado grupo-${e}`} aria-labelledby={`grupo-${e}`}>
-              <h2 id={`grupo-${e}`}>
-                <span className={`insignia insignia-${e}`} aria-hidden="true">
-                  {ESTADO_ACTIVO[e].simbolo}
-                </span>
-                {ESTADO_ACTIVO[e].plural} <span className="cuenta">{lista.length}</span>
-              </h2>
-              <ul className="lista-activos">
-                {lista.map((a) => (
-                  <TarjetaActivo key={a.id} a={a} />
-                ))}
-              </ul>
-            </section>
-          ))}
+    <ConColumna
+      activos={activos}
+      lateral={<ServidoresVisualizados activos={activos} elegido={proveedor} alElegir={setProveedor} />}
+    >
+      <div className={`franja ${conProblemas ? "franja-alerta" : "franja-bien"}`} role="status">
+        <span className="franja-punto" aria-hidden="true" />
+        <span>
+          <strong>
+            {conProblemas ? `${conProblemas} de ${vigentes} activos requieren atención` : `Operación estable: ${vigentes} activos`}
+          </strong>
+          <br />
+          {conProblemas
+            ? `${nombrados.join(", ")}${resto > 0 ? ` y ${resto} más` : ""}. Abajo, primero lo que dejó de reportar y después lo que tiene incidentes abiertos.`
+            : "Todos los activos reportan y no tienen incidentes abiertos."}
+        </span>
       </div>
-      <ResumenHibrido activos={activos} />
-    </div>
+      <form className="filtros-inventario" onSubmit={(e) => e.preventDefault()} role="search">
+        <label>
+          Buscar
+          <input type="search" value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="nombre o id" />
+        </label>
+        <label>
+          Proveedor
+          <select value={proveedor} onChange={(e) => setProveedor(e.target.value as Proveedor | "")}>
+            <option value="">Todos</option>
+            {[...new Set(activos.map((a) => a.proveedor))].sort().map((p) => (
+              <option key={p} value={p}>
+                {datosProveedor(p).nombre}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Entorno
+          <select value={entorno} onChange={(e) => setEntorno(e.target.value)}>
+            <option value="">Todos</option>
+            {entornos.map((x) => (
+              <option key={x} value={x}>
+                {x}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Estado
+          <select value={estado} onChange={(e) => setEstado(e.target.value as EstadoActivo | "")}>
+            <option value="">Todos</option>
+            {ORDEN_ESTADO_ACTIVO.map((x) => (
+              <option key={x} value={x}>
+                {ESTADO_ACTIVO[x].texto}
+              </option>
+            ))}
+          </select>
+        </label>
+      </form>
+      {visibles.length === 0 && <SinDatos titulo="Ningún activo coincide" detalle="Cambia la búsqueda o los filtros." />}
+      {grupos
+        .filter((g) => g.lista.length > 0)
+        .map(({ estado: e, lista }: { estado: EstadoActivo; lista: Activo[] }) => (
+          <section key={e} className={`grupo-estado grupo-${e}`} aria-labelledby={`grupo-${e}`}>
+            <h2 id={`grupo-${e}`}>
+              <span className={`insignia insignia-${e}`} aria-hidden="true">
+                {ESTADO_ACTIVO[e].simbolo}
+              </span>
+              {ESTADO_ACTIVO[e].plural} <span className="cuenta">{lista.length}</span>
+            </h2>
+            <ul className="lista-activos">
+              {lista.map((a) => (
+                <TarjetaActivo key={a.id} a={a} />
+              ))}
+            </ul>
+          </section>
+        ))}
+    </ConColumna>
   );
 }
 

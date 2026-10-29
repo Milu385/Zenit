@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, ErrorApi } from "../api";
+import ConColumna from "../componentes/ColumnaDerecha";
 import { SinDatos } from "../componentes/Estados";
 import { InsigniaIncidente, InsigniaSeveridad } from "../componentes/Insignias";
 import Marco from "../componentes/Marco";
@@ -75,8 +76,21 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
   };
 
   const filtros: Filtro[] = ["abiertos", ...ORDEN_ESTADO_INCIDENTE, "todos"];
+  const altas = visibles.filter((i) => i.severidad === "alta").length;
+  // como "Requiere tu atencion" del panel general del wireframe: un panel
+  // amarillo con la cuenta arriba a la derecha y una barra de severidad en
+  // cada fila
+  const titulo =
+    filtro === "abiertos" ? "Requieren tu atención" : filtro === "todos" ? "Todos los incidentes" : `Incidentes en estado «${ESTADO_INCIDENTE[filtro].texto.toLowerCase()}»`;
   return (
-    <>
+    <section className="panel panel-amarillo panel-incidentes" aria-labelledby="titulo-lista-incidentes">
+      <div className="panel-cabecera">
+        <h2 id="titulo-lista-incidentes">{titulo}</h2>
+        <p className="panel-resumen">
+          {visibles.length} {visibles.length === 1 ? "incidente" : "incidentes"}
+          {altas > 0 && ` · ${altas} de severidad alta`}
+        </p>
+      </div>
       <nav className="filtros-chips" aria-label="Filtrar por estado">
         {filtros.map((f) => (
           <Enlace
@@ -121,7 +135,7 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
               {visibles.map((i) => (
                 <tr
                   key={i.id}
-                  className={`fila-inc fila-${i.estado}`}
+                  className={`fila-inc fila-${i.estado} fila-sev-${i.severidad}`}
                   tabIndex={0}
                   onClick={() => navegar(`/incidentes/${i.id}`)}
                   onKeyDown={(e) => abrirConTeclado(e, i.id)}
@@ -161,7 +175,7 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
           </table>
         </div>
       )}
-    </>
+    </section>
   );
 }
 
@@ -170,9 +184,11 @@ export default function Incidentes() {
   const actualizar = (nuevo: Incidente) => r.reemplazar((lista) => lista.map((i) => (i.id === nuevo.id ? nuevo : i)));
   return (
     <Marco titulo="Incidentes">
-      <SegunCarga r={r} que="los incidentes">
-        {(incidentes) => <Lista incidentes={incidentes} actualizar={actualizar} />}
-      </SegunCarga>
+      <ConColumna>
+        <SegunCarga r={r} que="los incidentes">
+          {(incidentes) => <Lista incidentes={incidentes} actualizar={actualizar} />}
+        </SegunCarga>
+      </ConColumna>
     </Marco>
   );
 }

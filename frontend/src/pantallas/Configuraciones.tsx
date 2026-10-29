@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
+import ConColumna from "../componentes/ColumnaDerecha";
 import { SinDatos } from "../componentes/Estados";
 import { InsigniaSeveridad } from "../componentes/Insignias";
 import Marco from "../componentes/Marco";
@@ -130,9 +131,11 @@ export default function Configuraciones() {
   const r = useCarga((s) => api.configuraciones(s), [], 60_000);
   return (
     <Marco titulo="Configuración">
-      <SegunCarga r={r} que="el reporte de configuraciones">
-        {(hallazgos) => <Contenido hallazgos={hallazgos} />}
-      </SegunCarga>
+      <ConColumna>
+        <SegunCarga r={r} que="el reporte de configuraciones">
+          {(hallazgos) => <Contenido hallazgos={hallazgos} />}
+        </SegunCarga>
+      </ConColumna>
     </Marco>
   );
 }

@@ -86,6 +86,7 @@ Desde la pantalla de costos, con un rol que tenga `costos:importar`. Otra opció
 - **Nada de la API se inserta como HTML.** React escapa todo el texto. El simulador trae un `<script>` dentro de una observación del diagnóstico para comprobarlo: se ve como texto.
 - **El texto lleva el estado, además del color.** Los estados de activo e incidente llevan símbolo, texto y color a la vez, y la severidad alta va subrayada.
 - **Datos desactualizados.** Si un refresco falla y ya había datos, se siguen mostrando con su hora y un aviso con botón de reintentar, en vez de cambiarlos por un error (`useCarga`).
+- **Columna azul a la derecha en todas las secciones** (`componentes/ColumnaDerecha.tsx`), como en los wireframes: arriba "Inventario híbrido" (sale de `GET /api/activos`; sin `activos:ver` no se muestra) y debajo lo propio de cada pantalla. "Cambios recientes" no se trae: la API no tiene un registro de cambios, y quién marcó un incidente solo sale en el detalle de cada uno.
 
 ### Sesión (pantalla 9)
 
@@ -98,13 +99,15 @@ Desde la pantalla de costos, con un rol que tenga `costos:importar`. Otra opció
 
 - **Se agrupa por estado, no por proveedor.** El orden es degradado, requiere atención, sin datos, operativo y retirado. El proveedor es un filtro y una etiqueta.
 - **Filtros:** búsqueda, proveedor, entorno y estado.
-- **La franja de arriba** dice cuántos de los activos vigentes requieren atención. Los retirados no cuentan.
+- **La franja de arriba** dice cuántos de los activos vigentes requieren atención y los nombra (los peores primero, hasta tres). Los retirados no cuentan.
+- **"Servidores visualizados"** en la columna azul: pulsar un proveedor deja ver solo sus activos; es el mismo filtro de proveedor de arriba.
 - **Retirados.** Se muestran al final, atenuados y con su insignia. No cuentan como fuentes en los indicadores de la cabecera.
 - **Una sola barra, la de CPU de los últimos 5 min.** El contrato solo trae `cpu_reciente`. La de memoria del primer borrador se quitó.
 
 ### Incidentes (pantalla 3)
 
 - **Orden:** primero los abiertos (detectada, con hipótesis, confirmada), luego por severidad y luego por inicio. El contrato ya los entrega por severidad e inicio; la interfaz solo sube los abiertos.
+- **Un panel amarillo "Requieren tu atención"**, como en el panel general del wireframe: la cuenta arriba a la derecha y una barra de color por severidad en cada fila.
 - **Falso positivo en un clic.** El botón está en la fila y llama a `POST /api/incidentes/{id}/estado` (H-037). La fila toma el incidente que responde la API. Si responde 409 (ya estaba cerrado o descartado), lo dice y el siguiente refresco pone la lista al día.
 - **Una columna "Hipótesis"** dice si ya hay diagnóstico (`tiene_diagnostico`).
 

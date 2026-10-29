@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { api } from "../api";
 import AnalisisCostos from "../componentes/AnalisisCostos";
+import ConColumna from "../componentes/ColumnaDerecha";
 import { SinDatos } from "../componentes/Estados";
 import Marco from "../componentes/Marco";
 import SegunCarga from "../componentes/SegunCarga";
@@ -42,7 +43,7 @@ function Importar({ alTerminar }: { alTerminar: () => void }) {
   };
 
   return (
-    <form className="panel panel-azul importar" onSubmit={enviar}>
+    <form className="importar" onSubmit={enviar}>
       <h2>Importar factura</h2>
       <p>Exporta la factura de DigitalOcean en CSV (Billing, Download CSV) y súbela aquí.</p>
       <label>
@@ -120,7 +121,8 @@ function Reporte({ r, activos }: { r: ReporteCostos; activos: Activo[] | null })
         </li>
       </ul>
 
-      <section className="panel panel-amarillo" aria-labelledby="titulo-por-activo">
+      {/* azul como el "Panel de costos" del wireframe */}
+      <section className="panel panel-azul" aria-labelledby="titulo-por-activo">
         <h2 id="titulo-por-activo">Costo por activo</h2>
         <div className="tabla-contenedor">
           <table className="tabla">
@@ -160,8 +162,7 @@ function Reporte({ r, activos }: { r: ReporteCostos; activos: Activo[] | null })
       </section>
 
       <div className="rejilla-dos">
-        <Totales
-          titulo="Por proveedor"
+        <Distribucion
           filas={porProveedor.map(([k, v]) => [k === "desconocido" ? "Desconocido" : datosProveedor(k).nombre, v])}
           moneda={r.moneda}
         />
@@ -174,6 +175,29 @@ function Reporte({ r, activos }: { r: ReporteCostos; activos: Activo[] | null })
         )}
       </div>
     </>
+  );
+}
+
+// "Distribucion del gasto" del wireframe: una barra por proveedor, con el
+// monto escrito encima (la barra sola no dice cuanto es).
+function Distribucion({ filas, moneda }: { filas: [string, number][]; moneda: string }) {
+  const maximo = Math.max(...filas.map(([, v]) => v), 0);
+  return (
+    <section className="panel panel-amarillo distribucion" aria-labelledby="titulo-distribucion">
+      <h2 id="titulo-distribucion">Distribución del gasto</h2>
+      <ul className="barras" aria-label="Costo atribuido por proveedor">
+        {filas.map(([k, v]) => (
+          <li key={k}>
+            <span className="barras-valor">{dinero(v, moneda)}</span>
+            <span className="barras-columna" aria-hidden="true">
+              <span style={{ height: `${maximo > 0 ? Math.max(2, (v / maximo) * 100) : 0}%` }} />
+            </span>
+            <span className="barras-nombre">{k}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="nota">Por proveedor. Solo lo atribuido; lo sin asignar queda fuera.</p>
+    </section>
   );
 }
 
@@ -218,62 +242,64 @@ export default function Costos() {
   const activos = inv.carga.estado === "listo" ? inv.carga.datos : null;
   return (
     <Marco titulo="Costos">
-      <div className="rejilla-con-lateral">
-        <div>
-          {r.carga.estado !== "sin_permiso" && (
-            <form className="filtros-inventario" onSubmit={(e) => e.preventDefault()}>
-              <label>
-                Desde
-                <input type="date" value={desde} max={hasta || undefined} onChange={(e) => setDesde(e.target.value)} />
-              </label>
-              <label>
-                Hasta
-                <input type="date" value={hasta} min={desde || undefined} onChange={(e) => setHasta(e.target.value)} />
-              </label>
-              {(desde || hasta) && (
-                <button
-                  type="button"
-                  className="boton-texto"
-                  onClick={() => {
-                    setDesde("");
-                    setHasta("");
-                  }}
-                >
-                  Periodo por defecto
-                </button>
-              )}
-            </form>
-          )}
-          {invertido ? (
-            <p className="mensaje-error">La fecha inicial es posterior a la final.</p>
-          ) : (
-            <SegunCarga r={r} que="los costos">
-              {(datos) => (
-                <>
-                  <p className="meta">
-                    Periodo: {datos.periodo.desde} a {datos.periodo.hasta}
-                    {!desde && !hasta ? " (por defecto: todo lo importado o, si no hay nada, el mes en curso)" : ""}
-                  </p>
-                  <Reporte r={datos} activos={activos} />
-                </>
-              )}
-            </SegunCarga>
-          )}
-          {!invertido && r.carga.estado === "listo" && (
-            <SegunCarga r={an} que="la tendencia y el uso">
-              {(a) => <AnalisisCostos a={a} />}
-            </SegunCarga>
-          )}
-        </div>
-        {puede("costos:importar") && (
-          <Importar
-            alTerminar={() => {
-              r.reintentar();
-              an.reintentar();
-            }}
-          />
+      <ConColumna
+        lateral={
+          puede("costos:importar") && (
+            <Importar
+              alTerminar={() => {
+                r.reintentar();
+                an.reintentar();
+              }}
+            />
+          )
+        }
+        activos={activos ?? undefined}
+      >
+        {r.carga.estado !== "sin_permiso" && (
+          <form className="filtros-inventario" onSubmit={(e) => e.preventDefault()}>
+            <label>
+              Desde
+              <input type="date" value={desde} max={hasta || undefined} onChange={(e) => setDesde(e.target.value)} />
+            </label>
+            <label>
+              Hasta
+              <input type="date" value={hasta} min={desde || undefined} onChange={(e) => setHasta(e.target.value)} />
+            </label>
+            {(desde || hasta) && (
+              <button
+                type="button"
+                className="boton-texto"
+                onClick={() => {
+                  setDesde("");
+                  setHasta("");
+                }}
+              >
+                Periodo por defecto
+              </button>
+            )}
+          </form>
         )}
-      </div>
+        {invertido ? (
+          <p className="mensaje-error">La fecha inicial es posterior a la final.</p>
+        ) : (
+          <SegunCarga r={r} que="los costos">
+            {(datos) => (
+              <>
+                <p className="meta">
+                  Periodo: {datos.periodo.desde} a {datos.periodo.hasta}
+                  {!desde && !hasta ? " (por defecto: todo lo importado o, si no hay nada, el mes en curso)" : ""}
+                </p>
+                <Reporte r={datos} activos={activos} />
+              </>
+            )}
+          </SegunCarga>
+        )}
+        {!invertido && r.carga.estado === "listo" && (
+          <SegunCarga r={an} que="la tendencia y el uso">
+            {(a) => <AnalisisCostos a={a} />}
+          </SegunCarga>
+        )}
+      </ConColumna>
     </Marco>
   );
 }
