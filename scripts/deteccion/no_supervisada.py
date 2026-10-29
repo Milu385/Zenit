@@ -101,10 +101,29 @@ metrica, con las etiquetas y dimensiones de cada punto y la columna `value`.
 | red_bytes_s | system_network_io | tasa por segundo, suma de interfaces sin `lo` y de las dos direcciones |
 | tasa_llamadas_* | traces_span_metrics_calls | tasa por segundo, `service_name` que contiene `pedido` / `catalogo` |
 
-Esta parte no se pudo probar contra una exportacion real de Azure (no
-estaba al escribirla): la prueba usa tablas construidas a mano con la forma
-que describe `zenit.admin.exportar`. Lo primero al correrla con la de Azure
-es mirar el resumen que imprime (minutos y nulos por variable).
+La prueba usa tablas construidas a mano con la forma que describe
+`zenit.admin.exportar`. Con la exportacion real de Azure
+(`zenit-export-2026-10-27`, nodo de laboratorio) el resumen dio 14 882
+minutos y casi ningun nulo (3 en `red_bytes_s`, 5 y 8 en las llamadas): las
+siete variables se arman bien desde los Parquet.
+
+Medido en Azure
+---------------
+
+Entrenado del 16 de octubre al despliegue de mad-v2 (26 de octubre, 14:01
+UTC) y detectando del despliegue al 27 a las 23:00, evaluado con
+`zenit.deteccion.evaluacion` contra la linea base en la misma ventana (solo
+el nodo de laboratorio, que es lo que trae la exportacion):
+
+| Metodo | Detectadas | Falsos positivos | Precision | F1 | Retardo medio | Caidas |
+|---|---|---|---|---|---|---|
+| Linea base (mad-v2) | 18 de 20 | 5 | 85,3 % | 87,6 % | 1,6 min | 3 de 5 |
+| KMeans (kmeans-v1 k=6) | 20 de 20 | 0 | 100 % | 100 % | 2,5 min | 5 de 5 |
+
+Mejora a la linea base en esta ventana, con las mismas reservas de arriba:
+mismo nodo y mismos tipos de fallo en el entrenamiento, 20 inyecciones en
+33 horas y ninguna de CPU. Lectura completa en `docs/evaluacion/azure.md`;
+para repetirlo con la exportacion final, `scripts/deteccion/evaluar_azure.sh`.
 """
 import argparse
 import json

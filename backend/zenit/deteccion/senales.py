@@ -155,6 +155,70 @@ La version del modelo pasa a `mad-v2` con este cambio y con el de la
 historia completa (ver `detector.py`): las anomalias abiertas antes llevan
 `mad-v1` y se pueden separar en la evaluacion.
 
+**Swap y sistema de archivos: medido, no desplegado (mejora propuesta,
+mad-v3).** `system_paging_usage` y `system_filesystem_usage` estan en bytes
+y no llevan piso. Un piso nuevo cambiaria el metodo y partiria otra vez la
+ventana de H-029, asi que se midio fuera de linea con
+`scripts/deteccion/medir_piso.py` sobre `zenit-export-2026-10-27` (nodo de
+laboratorio de Azure, 16 al 27 de octubre, 164 inyecciones). El script
+reproduce el servicio: misma apertura (`detectar_eventos`), bloqueo de la
+serie mientras su anomalia sigue abierta y cierre con la linea base
+congelada y el piso del 5 %. Sin piso reproduce minuto a minuto las
+anomalias reales de esas dos senales en Azure (3 de 3 del swap y 10 de 10
+del disco en la ventana de mad-v2, y tambien las 6, 95, 116 y 305 de
+mad-v1).
+
+Campana completa, cada racha critica cuenta como una anomalia (en once
+dias, una sola anomalia que no cierra taparia todo lo demas):
+
+| Senal | Piso | Anomalias | Ruido | Sobre otra inyeccion | Detectadas | `alta` dentro |
+|---|---|---|---|---|---|---|
+| swap | sin piso | 16 | 1 | 0 | memoria 15 de 30 | 0 |
+| swap | 8, 16 o 64 MiB | 0 | 0 | 0 | memoria 0 de 30 | 0 |
+| disco | sin piso | 69 | 3 | 2 | disco 64 de 74 (gradual 26, abrupto 38) | 64 |
+| disco | 64 o 128 MiB | 67 | 1 | 1 | disco 65 de 74 (gradual 26, abrupto 39) | 0 |
+| disco | 256 MiB | 66 | 0 | 1 | disco 65 de 74 (gradual 26, abrupto 39) | 0 |
+
+Ventana de mad-v2 (26 de octubre 14:01 UTC al 27 a las 23:00), con
+bloqueo y cierre como el servicio: el swap abre 3 anomalias sin piso y 0
+con cualquier piso; el disco abre 10 con o sin piso y detecta las 10
+inyecciones de disco de la ventana (4 graduales y 6 abruptas). Ruido: 0 en
+las dos senales.
+
+Lo que dice:
+
+- **En Azure el swap no es ruido.** 15 de sus 16 anomalias caen dentro de
+  una inyeccion de memoria: la 530 del 26 de octubre, por ejemplo, empezo a
+  las 15:08, cinco minutos despues de la inyeccion de memoria de las 15:03,
+  y en H-029 cuenta como correcta, no como falso positivo. Lo que se mueve
+  son decenas de KB (el nodo casi no usa el swap), asi que cualquier piso
+  probado, desde 8 MiB, las borra todas. **No cuesta exhaustividad:** las
+  15 inyecciones que ve el swap tambien las ve `system_memory_utilization`
+  con mad-v2 (28 de 30 por si sola; el swap no agrega ninguna).
+- **El ruido del swap esta en Kaderno**, y la exportacion no lo trae (es
+  solo del nodo de Azure). La 531, a la misma hora que la 530, es de
+  Kaderno, y alli no hay inyecciones: todo lo que abre es falso positivo
+  (10 anomalias de swap con mad-v2 hasta el 27). Con la evidencia de las que
+  quedaron abiertas en mad-v1 (la 71: 262 KB sobre una mediana de 111 MiB),
+  el piso de 8 MiB las quitaria, pero eso hay que medirlo con una
+  exportacion de Kaderno antes de afirmarlo en el informe.
+- **En el disco el piso casi no quita ruido y si quita la severidad.** Tres
+  eventos de ruido en once dias (0,3 por dia) y ninguno en la ventana de
+  mad-v2. Con 64 MiB quedan uno, con 256 MiB ninguno, y la deteccion no
+  cambia (65 de 74). Pero el puntaje del disco depende de lo plana que es
+  su linea base: con 64 MiB la mediana del puntaje dentro de una inyeccion
+  baja de 4487 a 204 y las 64 `alta` pasan a `media`, lo mismo que se vio
+  con el piso relativo. Ningun piso probado deja una inyeccion de disco en
+  `alta`.
+
+**Recomendacion para el informe (mad-v3, no desplegada):** piso absoluto de
+**8 MiB para `system_paging_usage`**, condicionado a confirmar con una
+exportacion de Kaderno que quita su ruido; no cuesta ninguna deteccion de
+memoria en Azure. **Sin piso para `system_filesystem_usage`**: su ruido es
+bajo y cualquier piso que lo quite borra la severidad `alta` de los llenados
+de disco. Si se quisiera quitar ese ruido, el camino no es el piso de la
+escala sino el criterio de severidad, y queda fuera de esta entrega.
+
 De donde salen estos nombres
 ----------------------------
 
