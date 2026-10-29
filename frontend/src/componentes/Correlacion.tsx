@@ -10,7 +10,7 @@ import { SinDatos } from "./Estados";
 // ventana. Los cuerpos se insertan como texto, nunca como HTML.
 
 const hora = (iso: string) =>
-  new Date(iso).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  new Date(iso).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
 const ms = (ns: number | null) => {
   if (ns == null) return null;

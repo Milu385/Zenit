@@ -19,6 +19,7 @@ function Importar({ alTerminar }: { alTerminar: () => void }) {
   const archivo = useRef<HTMLInputElement>(null);
   const [enviando, setEnviando] = useState(false);
   const [resultado, setResultado] = useState<ResumenImportacion | null>(null);
+  const [nombre, setNombre] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const enviar = async (e: FormEvent) => {
@@ -34,6 +35,7 @@ function Importar({ alTerminar }: { alTerminar: () => void }) {
     try {
       setResultado(await api.importarFactura("digitalocean", f));
       if (archivo.current) archivo.current.value = "";
+      setNombre("");
       alTerminar();
     } catch (ex) {
       setError(ex instanceof Error ? ex.message : String(ex));
@@ -46,10 +48,26 @@ function Importar({ alTerminar }: { alTerminar: () => void }) {
     <form className="importar" onSubmit={enviar}>
       <h2>Importar factura</h2>
       <p>Exporta la factura de DigitalOcean en CSV (Billing, Download CSV) y súbela aquí.</p>
-      <label>
+      {/* el control nativo ("Choose File / No file chosen") va oculto pero
+          enfocable; se ve un boton con el estilo de la plataforma */}
+      <span className="etiqueta-archivo" id="etiqueta-archivo">
         Archivo CSV
-        <input ref={archivo} type="file" accept=".csv,text/csv" />
-      </label>
+      </span>
+      <span className="campo-archivo">
+        <input
+          id="archivo-csv"
+          ref={archivo}
+          type="file"
+          accept=".csv,text/csv"
+          className="entrada-archivo"
+          aria-labelledby="etiqueta-archivo"
+          onChange={(e) => setNombre(e.target.files?.[0]?.name ?? "")}
+        />
+        <label htmlFor="archivo-csv" className="boton-archivo">
+          Elegir archivo
+        </label>
+        <span className="nombre-archivo">{nombre || "Ningún archivo elegido"}</span>
+      </span>
       <button type="submit" className="boton-primario" disabled={enviando}>
         {enviando ? "Importando..." : "Importar"}
       </button>

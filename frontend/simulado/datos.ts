@@ -281,7 +281,7 @@ type IncidenteBase = Omit<Incidente, "inicio" | "fin" | "tiene_diagnostico"> & {
   diagnostico: ((inicio: string, fin: string) => Diagnostico) | null;
 };
 
-const metodo = "mediana y desviacion absoluta mediana, ventana de 60 min";
+const metodo = "mediana y desviación absoluta mediana, ventana de 60 min";
 
 const INCIDENTES_BASE: IncidenteBase[] = [
   {
@@ -303,7 +303,7 @@ const INCIDENTES_BASE: IncidenteBase[] = [
     }),
     diagnostico: (inicio, fin) => ({
       texto:
-        "Hipotesis: aumento de carga entrante. La CPU de zenit-nodo-aws subio de forma sostenida al mismo tiempo que el trafico de red entrante, y la memoria no cambio, asi que una fuga parece menos probable. Conviene revisar si hubo un pico de peticiones o un cliente reintentando.",
+        "Hipótesis: aumento de carga entrante. La CPU de zenit-nodo-aws subió de forma sostenida al mismo tiempo que el tráfico de red entrante, y la memoria no cambió, así que una fuga parece menos probable. Conviene revisar si hubo un pico de peticiones o un cliente reintentando.",
       evidencia_citada: [
         {
           metrica: "system_cpu_utilization",
@@ -315,7 +315,7 @@ const INCIDENTES_BASE: IncidenteBase[] = [
           metrica: "system_network_io",
           desde: inicio,
           hasta: fin,
-          observacion: "Trafico entrante 41 % sobre su linea base en la misma ventana.",
+          observacion: "Tráfico entrante 41 % sobre su línea base en la misma ventana.",
         },
         {
           metrica: "system_memory_utilization",
@@ -390,7 +390,7 @@ const INCIDENTES_BASE: IncidenteBase[] = [
     }),
     diagnostico: (inicio, fin) => ({
       texto:
-        "Hipotesis: la cache del motor crece sin limite. La memoria sube en escalones y no baja despues de cada consulta pesada. No hay evidencia de reinicios.",
+        "Hipótesis: la caché del motor crece sin límite. La memoria sube en escalones y no baja después de cada consulta pesada. No hay evidencia de reinicios.",
       evidencia_citada: [
         { metrica: "system_memory_utilization", desde: inicio, hasta: fin, observacion: "Escalones de 3 a 5 % cada hora, sin bajadas." },
       ],
@@ -457,7 +457,7 @@ function diagnosticoDe(b: IncidenteBase): Diagnostico | null {
     return {
       texto:
         base?.texto ??
-        "Hipotesis: el nodo dejo de enviar datos de red, no de recibir trafico. El valor observado es cero y la CPU tambien dejo de llegar en la misma ventana, lo que apunta a un corte del agente o del nodo mas que a una caida del trafico.",
+        "Hipótesis: el nodo dejó de enviar datos de red, no de recibir tráfico. El valor observado es cero y la CPU también dejó de llegar en la misma ventana, lo que apunta a un corte del agente o del nodo más que a una caída del trafico.",
       evidencia_citada: base?.evidencia_citada ?? [
         { metrica: b.metrica, desde: inicio, hasta: fin, observacion: "Cero bytes recibidos desde el inicio." },
         { metrica: "system_cpu_utilization", desde: inicio, hasta: fin, observacion: "Sin puntos de CPU en la misma ventana." },
@@ -665,7 +665,7 @@ export function configuraciones(): Hallazgo[] {
       activos: ["activo-do-nodo-01"],
       entornos: ["digitalocean"],
       detalle:
-        "El puerto 5432/tcp escucha en 0.0.0.0 en zenit-nodo-do (docker-proxy) y no esta entre los esperados del entorno digitalocean. Es uno de los que nunca deben quedar expuestos.",
+        "El puerto 5432/tcp escucha en 0.0.0.0 en zenit-nodo-do (docker-proxy) y no está entre los esperados del entorno digitalocean. Es uno de los que nunca deben quedar expuestos.",
       detectado: cuando,
     },
     {
@@ -681,7 +681,7 @@ export function configuraciones(): Hallazgo[] {
       severidad: "media",
       activos: ["activo-onprem-01"],
       entornos: ["onprem"],
-      detalle: "Muestrean distinto del comun (10 s): zenit-nodo-onprem cada 30 s.",
+      detalle: "Muestrean distinto del común (10 s): zenit-nodo-onprem cada 30 s.",
       detectado: cuando,
     },
     {
@@ -690,7 +690,7 @@ export function configuraciones(): Hallazgo[] {
       activos: ["activo-onprem-01"],
       entornos: ["onprem"],
       detalle:
-        "zenit-nodo-onprem corre el agente 0.110.0 y el resto 0.116.1. La comparacion entre entornos solo vale si todos miden con la misma version.",
+        "zenit-nodo-onprem corre el agente 0.110.0 y el resto 0.116.1. La comparación entre entornos solo vale si todos miden con la misma versión.",
       detectado: cuando,
     },
     {

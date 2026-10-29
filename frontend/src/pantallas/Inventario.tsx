@@ -39,13 +39,13 @@ function TarjetaActivo({ a }: { a: Activo }) {
         </span>
         <span className="tarjeta-activo-cuerpo">
           <span className="tarjeta-activo-nombre">{a.nombre}</span>
+          {/* sin el proveedor (ya lo dice la sigla) ni el estado (ya lo dice el
+              grupo): solo lo que distingue a este activo de sus vecinos */}
           <span className="tarjeta-activo-meta">
-            {a.id} · {p.nombre}
+            {a.id}
             {a.region ? ` · ${a.region}` : ""} · entorno {a.entorno}
           </span>
-          <span className={`insignia insignia-${a.estado}`}>
-            <span aria-hidden="true">{e.simbolo}</span> {e.texto}
-          </span>
+          <span className="solo-lector">{p.nombre}. Estado: {e.texto}.</span>
         </span>
         <span className="tarjeta-activo-uso">
           {/* el contrato solo trae CPU: promedio de los ultimos 5 min */}
@@ -116,7 +116,7 @@ function Contenido({ activos }: { activos: Activo[] }) {
     return (
       <SinDatos
         titulo="Todavía no hay activos en el inventario"
-        detalle="El descubrimiento todavia no encontro nodos. Para admitir uno a mano: zenit.admin catalogo admitir."
+        detalle="El descubrimiento todavía no encontró nodos. Para admitir uno a mano: zenit.admin catalogo admitir."
       />
     );
   const q = texto.trim().toLowerCase();

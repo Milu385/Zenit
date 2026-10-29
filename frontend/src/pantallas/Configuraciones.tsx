@@ -29,7 +29,7 @@ function Contenido({ hallazgos }: { hallazgos: Hallazgo[] }) {
     return (
       <SinDatos
         titulo="Sin hallazgos"
-        detalle="Las ultimas instantaneas de los nodos cumplen todas las reglas. Si nunca se enviaron, corre scripts/instantanea-nodo.sh en cada nodo."
+        detalle="Las últimas instantáneas de los nodos cumplen todas las reglas. Si nunca se enviaron, corre scripts/instantanea-nodo.sh en cada nodo."
       />
     );
   const entornos = [...new Set(hallazgos.flatMap((h) => h.entornos))].sort();

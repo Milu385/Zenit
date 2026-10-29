@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { Registro, ResumenTraza, Span } from "../contrato";
 import { useRuta } from "../enrutador";
-import { fechaHora, hace } from "../formato";
+import { fechaHora, hace, rangoFechas } from "../formato";
 import { useCarga } from "../useCarga";
 import TablaCorrelacion from "./Correlacion";
 import { SinDatos } from "./Estados";
@@ -41,7 +41,7 @@ const ms = (ns: number) => {
 
 const entero = (n: number) => n.toLocaleString("es-CO");
 
-const hora = (iso: string) => new Date(iso).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const hora = (iso: string) => new Date(iso).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
 // ---------------------------------------------------------------- registros
 
@@ -244,7 +244,7 @@ export default function RegistrosYTrazas({ activo }: { activo: string }) {
         </div>
       </div>
       <p className="nota">
-        {fechaHora(ventana.desde.toISOString())} a {fechaHora(ventana.hasta.toISOString())} ({hace(ventana.desde.toISOString())} hasta ahora)
+        {rangoFechas(ventana.desde.toISOString(), ventana.hasta.toISOString())} ({hace(ventana.desde.toISOString())} hasta ahora)
       </p>
 
       <h4>Registros</h4>

@@ -37,7 +37,7 @@ body { margin: 0; background: var(--fondo); color: var(--texto); }
 .filtros .casilla { flex-direction: row; align-items: center; gap: 6px; font-size: 14px; color: var(--texto); padding-bottom: 6px; }
 
 .contenido { background: var(--superficie); border: 1px solid var(--borde); border-radius: 8px; padding: 16px; min-height: 360px; }
-.titulo-serie { margin: 0 0 8px; font-size: 16px; font-weight: 600; font-family: ui-monospace, Menlo, monospace; }
+.titulo-serie { margin: 0 0 8px; font-size: 17px; font-weight: 700; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
 
 .grafica { margin: 0; position: relative; transition: opacity 0.2s; }
 .grafica-refrescando { opacity: 0.85; }

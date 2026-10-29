@@ -100,7 +100,7 @@ function TablaFuentes({ fuentes }: { fuentes: Fuente[] }) {
                     if (!x)
                       return (
                         <td key={s}>
-                          <span className="apagado">no envia</span>
+                          <span className="apagado">no envía</span>
                         </td>
                       );
                     return (
@@ -128,7 +128,7 @@ function TablaFuentes({ fuentes }: { fuentes: Fuente[] }) {
 
 function situacion(h: Huerfana) {
   if (h.asociada_a) return { texto: `Asociada a ${h.asociada_a}`, ayuda: h.asociada_en ? `Reasignada ${hace(h.asociada_en)}` : undefined };
-  if (h.resuelve_a) return { texto: `Asociable a ${h.resuelve_a}`, ayuda: "La clave ya esta en el catálogo; falta reasignar la telemetría previa" };
+  if (h.resuelve_a) return { texto: `Asociable a ${h.resuelve_a}`, ayuda: "La clave ya está en el catálogo; falta reasignar la telemetría previa" };
   return { texto: "Sin activo en el catálogo", ayuda: "Ningún activo tiene esta clave" };
 }
 

@@ -1,7 +1,7 @@
 import { api } from "../api";
 import type { EvidenciaIncidente, MetricaEvidencia } from "../contrato";
 import { Enlace } from "../enrutador";
-import { fechaHora, formatoValor, nombreMetrica } from "../formato";
+import { fechaHora, formatoValor, nombreMetrica, rangoFechas } from "../formato";
 import { useCarga } from "../useCarga";
 import TablaCorrelacion from "./Correlacion";
 import { SinDatos } from "./Estados";
@@ -15,7 +15,7 @@ import SegunCarga from "./SegunCarga";
 const REGISTROS_VISIBLES = 10;
 
 const hora = (iso: string) =>
-  new Date(iso).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  new Date(iso).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
 const ms = (ns: number | null | undefined) => {
   if (ns == null) return "sin dato";
@@ -235,7 +235,7 @@ export default function EvidenciaSenales({ id }: { id: number }) {
         {(e) => (
           <>
             <p className="meta">
-              Ventana de registros y trazas: {fechaHora(e.ventana_registros.desde)} a {fechaHora(e.ventana_registros.hasta)}
+              Ventana de registros y trazas: {rangoFechas(e.ventana_registros.desde, e.ventana_registros.hasta)}
             </p>
             {e.faltantes.length > 0 && (
               <p className="aviso-desactualizado" role="status" title={e.faltantes.join("\n")}>

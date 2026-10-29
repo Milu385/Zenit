@@ -204,7 +204,7 @@ export default function VistaSerie({ activo, metrica: metricaFija, ventana, titu
       return (
         <SinDatos
           titulo="Este activo no ha reportado en la última hora"
-          detalle="Revisa que el agente del nodo este arriba y que la ingesta no lo marque como huérfano."
+          detalle="Revisa que el agente del nodo esté arriba y que la ingesta no lo marque como huérfano."
         />
       );
     if (serie.estado === "cargando" || !listaLaAgrupacion) return <Cargando />;
@@ -314,7 +314,13 @@ export default function VistaSerie({ activo, metrica: metricaFija, ventana, titu
       </form>
 
       <div className="contenido">
-        {metrica && listos && <h3 className="titulo-serie">{titulo ?? `${nombreMetrica(metrica)} · ${metrica}`}</h3>}
+        {metrica && listos && (
+          <h3 className="titulo-serie">
+            {/* el nombre en lenguaje normal; el de la metrica, pequeno al lado, para quien lo busque */}
+            {titulo ?? nombreMetrica(metrica)}
+            {!titulo && <span className="metrica-tecnica">{metrica}</span>}
+          </h3>
+        )}
         {cuerpo}
       </div>
     </div>

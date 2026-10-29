@@ -59,10 +59,28 @@ export function duracion(desde: string, hasta: string | null, ahora = Date.now()
 export const fechaValida = (iso: string) => !Number.isNaN(new Date(iso).getTime());
 
 // Un texto que no es fecha se muestra tal cual en vez de "Invalid Date".
-export const fechaHora = (iso: string) =>
-  fechaValida(iso)
-    ? new Date(iso).toLocaleString("es-CO", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
-    : iso;
+// Fechas cortas y en 24 h, como la cabecera: "29 oct, 13:01". El formato del
+// navegador ("29 de oct, 01:01 p. m.") hacia ilegibles los rangos repetidos.
+const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const dosDigitos = (n: number) => String(n).padStart(2, "0");
+const diaCorto = (d: Date) => `${d.getDate()} ${MESES[d.getMonth()]}`;
+const horaCorta = (d: Date) => `${dosDigitos(d.getHours())}:${dosDigitos(d.getMinutes())}`;
+
+export const fechaHora = (iso: string) => {
+  if (!fechaValida(iso)) return iso;
+  const d = new Date(iso);
+  return `${diaCorto(d)}, ${horaCorta(d)}`;
+};
+
+/** "29 oct, 12:23–13:01" si es el mismo dia; "28 oct, 23:10 – 29 oct, 01:05" si no. */
+export function rangoFechas(desde: string, hasta: string): string {
+  if (!fechaValida(desde) || !fechaValida(hasta)) return `${fechaHora(desde)} a ${fechaHora(hasta)}`;
+  const a = new Date(desde);
+  const b = new Date(hasta);
+  return diaCorto(a) === diaCorto(b) && a.getFullYear() === b.getFullYear()
+    ? `${diaCorto(a)}, ${horaCorta(a)}–${horaCorta(b)}`
+    : `${fechaHora(desde)} – ${fechaHora(hasta)}`;
+}
 
 export const porcentaje = (v: number | null) => (v == null ? "sin dato" : `${Math.round(v * 100)} %`);
 

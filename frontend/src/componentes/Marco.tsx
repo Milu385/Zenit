@@ -117,6 +117,10 @@ export default function Marco({ titulo, children }: { titulo: string; children: 
   useEffect(() => {
     titulo1.current?.focus({ preventScroll: true });
   }, [ruta]);
+  // el titulo de la pestana dice en que pantalla se esta ("Incidente 41 · Zenit")
+  useEffect(() => {
+    document.title = `${titulo} · Zenit`;
+  }, [titulo]);
   const yo = sesion.estado === "dentro" ? sesion.yo : null;
   return (
     <div className="marco">
@@ -145,7 +149,7 @@ export default function Marco({ titulo, children }: { titulo: string; children: 
             <div>
               <p className="nombre">{mayuscula(yo.usuario)}</p>
               <p className="rol">{NOMBRE_ROL[yo.rol]}</p>
-              <button type="button" className="boton-texto" onClick={() => void salir()}>
+              <button type="button" className="boton-salir" onClick={() => void salir()}>
                 Cerrar sesión
               </button>
             </div>

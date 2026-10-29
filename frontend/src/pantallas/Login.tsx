@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ErrorApi } from "../api";
 import { IconoOjo, Logo } from "../componentes/Iconos";
 import { useSesion } from "../sesion";
@@ -15,6 +15,9 @@ export default function Login({ motivo }: { motivo?: string }) {
   const [verClave, setVerClave] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    document.title = "Iniciar sesión · Zenit";
+  }, []);
 
   const enviar = async (e: FormEvent) => {
     e.preventDefault();

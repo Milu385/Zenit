@@ -8,7 +8,7 @@ import SegunCarga from "../componentes/SegunCarga";
 import VistaSerie from "../componentes/VistaSerie";
 import type { DetalleIncidente as Detalle, PeticionEstado } from "../contrato";
 import { Enlace } from "../enrutador";
-import { ABIERTO, claseDe, duracion, fechaHora, fechaValida, formatoValor, hace, nombreMetrica, tituloIncidente } from "../formato";
+import { ABIERTO, claseDe, duracion, fechaHora, fechaValida, formatoValor, hace, nombreMetrica, rangoFechas, tituloIncidente } from "../formato";
 import { useSesion } from "../sesion";
 import { useCarga } from "../useCarga";
 
@@ -146,7 +146,7 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
         e instanceof ErrorApi && e.estado === 403
           ? "Tu rol no puede pedir diagnósticos."
           : e instanceof ErrorApi && (e.estado === 404 || e.estado === 405)
-            ? "El servicio de diagnóstico todavía no esta disponible. La evidencia de abajo no depende de el."
+            ? "El servicio de diagnóstico todavía no está disponible. La evidencia de abajo no depende de él."
             : `No se pudo pedir la hipótesis: ${e instanceof Error ? e.message : e}`,
       );
     } finally {
@@ -229,7 +229,7 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
           <div>
             <dt>Ventana</dt>
             <dd>
-              {fechaHora(ev.ventana.desde)} a {fechaHora(ev.ventana.hasta)}
+              {rangoFechas(ev.ventana.desde, ev.ventana.hasta)}
             </dd>
           </div>
         </dl>
@@ -261,7 +261,7 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
                       .map((p, i) => (
                         <li key={p.clave}>
                           <button type="button" className="boton-texto" onClick={() => elegir(p.clave)}>
-                            {i + 1}. {nombreMetrica(p.metrica)}, {fechaHora(p.desde)} a {fechaHora(p.hasta)} →
+                            {i + 1}. {nombreMetrica(p.metrica)}, {rangoFechas(p.desde, p.hasta)} →
                           </button>
                         </li>
                       ))}
@@ -275,7 +275,7 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
           ) : (
             <p className="hipotesis-texto">
               {enCola
-                ? "La hipótesis esta en cola. Esta página la muestra cuando llegue."
+                ? "La hipótesis está en cola. Esta página la muestra cuando llegue."
                 : "Todavía no hay una hipótesis para este incidente. La evidencia del detector está al lado."}
             </p>
           )}
@@ -304,7 +304,7 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
                   <span>
                     <span className="tipo">{p.origen}</span>
                     <span className="descripcion">
-                      {nombreMetrica(p.metrica)}, {fechaHora(p.desde)} a {fechaHora(p.hasta)}
+                      {nombreMetrica(p.metrica)}, {rangoFechas(p.desde, p.hasta)}
                       {p.aproximada ? " (la cita no trae intervalo; ventana del detector)" : ""}
                     </span>
                     {p.observacion && <span className="descripcion observacion">{p.observacion}</span>}
@@ -326,7 +326,7 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
           </h3>
           {actual.observacion && <p className="observacion-citada">{actual.observacion}</p>}
           <p className="meta">
-            {d.activo} · {fechaHora(actual.desde)} a {fechaHora(actual.hasta)}, con 10 min de margen a cada lado
+            {d.activo} · {rangoFechas(actual.desde, actual.hasta)}, con 10 min de margen a cada lado
           </p>
           <VistaPieza
             key={actual.clave}
