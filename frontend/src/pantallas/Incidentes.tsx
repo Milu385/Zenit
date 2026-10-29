@@ -121,8 +121,7 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
               <tr>
                 <th scope="col">Estado</th>
                 <th scope="col">Severidad</th>
-                <th scope="col">Que pasa</th>
-                <th scope="col">Activo</th>
+                <th scope="col">Qué pasa</th>
                 <th scope="col">Desde</th>
                 <th scope="col">Duración</th>
                 <th scope="col">Hipótesis</th>
@@ -151,8 +150,9 @@ function Lista({ incidentes, actualizar }: { incidentes: Incidente[]; actualizar
                     <Enlace a={`/incidentes/${i.id}`} onClick={(e) => e.stopPropagation()} tabIndex={-1}>
                       {tituloIncidente(i)}
                     </Enlace>
+                    {/* el activo va debajo de lo que pasa, como en "Requiere tu atencion" del wireframe */}
+                    <span className="detalle">{i.activo}</span>
                   </th>
-                  <td>{i.activo}</td>
                   <td title={new Date(i.inicio).toLocaleString()}>{hace(i.inicio)}</td>
                   <td>{duracion(i.inicio, i.fin)}</td>
                   <td>{i.tiene_diagnostico ? "Lista" : <span className="apagado">Aún no</span>}</td>

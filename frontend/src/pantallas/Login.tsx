@@ -39,6 +39,8 @@ export default function Login({ motivo }: { motivo?: string }) {
   return (
     <div className="login">
       <section className="login-portada">
+        {/* el cuadro girado del logo, como antes, pero detras del texto */}
+        <Logo className="login-logo" tallo="#fff" />
         <div className="login-anillos" aria-hidden="true">
           <span />
           <span />
@@ -49,7 +51,6 @@ export default function Login({ motivo }: { motivo?: string }) {
           Bienvenido
           <br />a zenit!
         </h1>
-        <Logo className="login-logo" tallo="#fff" />
         <p className="login-lema">Monitorea y analiza tu infraestructura desde un solo lugar.</p>
         <p className="login-texto">
           Centraliza el estado, rendimiento, tráfico y consumo de tus servidores locales y servicios en la nube.

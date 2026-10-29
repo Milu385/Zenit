@@ -65,7 +65,6 @@ function Subutilizados({ a }: { a: Analisis }) {
               <tr>
                 <th scope="col">Situación</th>
                 <th scope="col">Activo</th>
-                <th scope="col">Entorno</th>
                 <th scope="col" className="numero">
                   Costo
                 </th>
@@ -78,7 +77,7 @@ function Subutilizados({ a }: { a: Analisis }) {
                 <th scope="col" className="numero">
                   Memoria promedio
                 </th>
-                <th scope="col">Por que</th>
+                <th scope="col">Por qué</th>
               </tr>
             </thead>
             <tbody>
@@ -89,13 +88,13 @@ function Subutilizados({ a }: { a: Analisis }) {
                   </td>
                   <th scope="row">
                     <Enlace a={`/activos/${encodeURIComponent(x.activo)}`}>{x.activo}</Enlace>
+                    <span className="detalle">entorno {x.entorno}</span>
                   </th>
-                  <td>{x.entorno}</td>
                   <td className="numero">{dinero(x.costo, a.moneda)}</td>
                   <td className="numero">{porcentaje(x.cpu_promedio)}</td>
                   <td className="numero">{porcentaje(x.cpu_pico)}</td>
                   <td className="numero">{porcentaje(x.memoria_promedio)}</td>
-                  <td>{x.motivo}</td>
+                  <td className="celda-texto">{x.motivo}</td>
                 </tr>
               ))}
             </tbody>

@@ -47,7 +47,10 @@ function TablaFuentes({ fuentes }: { fuentes: Fuente[] }) {
       <h2 id="titulo-fuentes">
         {todas ? "Todas las fuentes" : "Fuentes que no reportan"} <span className="cuenta">{visibles.length}</span>
       </h2>
-      <p className="nota">Una fuente queda degradada con más de 5 minutos sin recibir métricas. Sin datos: nunca reportó.</p>
+      <p className="nota">
+        Una fuente queda degradada con más de 5 minutos sin recibir métricas. Sin datos: nunca reportó. En cada señal: la última vez
+        que llegó · cuántas en los últimos 5 min, y debajo el total recibido.
+      </p>
       <label className="casilla">
         <input type="checkbox" checked={todas} onChange={(e) => setTodas(e.target.checked)} /> Mostrar también las que reportan bien (
         {propias.length - conProblema.length})
@@ -65,12 +68,10 @@ function TablaFuentes({ fuentes }: { fuentes: Fuente[] }) {
               <tr>
                 <th scope="col">Estado</th>
                 <th scope="col">Activo</th>
-                <th scope="col">Proveedor</th>
                 <th scope="col">Última recepción</th>
                 {SENALES.map((s) => (
                   <th key={s} scope="col">
                     {NOMBRE_SENAL[s]}
-                    <span className="meta-dato">última vez · recibidas en 5 min · total</span>
                   </th>
                 ))}
               </tr>
@@ -83,9 +84,11 @@ function TablaFuentes({ fuentes }: { fuentes: Fuente[] }) {
                   </td>
                   <th scope="row">
                     <Enlace a={`/activos/${encodeURIComponent(f.activo)}`}>{f.activo}</Enlace>
-                    <span className="meta-dato">{f.host_name}</span>
+                    {/* el proveedor va debajo del activo, no en su propia columna: la tabla cabe sin desplazarse */}
+                    <span className="meta-dato">
+                      {f.proveedor ? datosProveedor(f.proveedor).nombre : "proveedor sin dato"} · {f.host_name}
+                    </span>
                   </th>
-                  <td>{f.proveedor ? datosProveedor(f.proveedor).nombre : <span className="apagado">sin dato</span>}</td>
                   <td title={f.ultima_recepcion ? fechaHora(f.ultima_recepcion) : undefined}>
                     {f.ultima_recepcion ? hace(f.ultima_recepcion) : "nunca"}
                     {f.minutos_sin_datos != null && f.estado !== "ok" && (

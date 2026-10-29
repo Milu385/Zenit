@@ -5,10 +5,14 @@ import cargador from "../recursos/cargador.gif";
 
 export function Cargando({ texto = "Cargando la serie..." }: { texto?: string }) {
   return (
-    <div className="estado" role="status" aria-live="polite">
-      {/* el cargador animado de Maria Lucia ("disenos zenit/gifs/a2_cargador") */}
-      <img className="cargador" src={cargador} alt="" width={72} height={72} />
-      <p>{texto}</p>
+    <div className="estado estado-cargando" role="status" aria-live="polite">
+      {/* el cargador animado de Maria Lucia ("disenos zenit/gifs/a2_cargador"),
+          sobre un cuadro del mismo negro de su fondo para que no se vea el borde */}
+      <span className="cargador-marco" aria-hidden="true">
+        <img className="cargador" src={cargador} alt="" width={96} height={96} />
+      </span>
+      <p className="estado-titulo">{texto.replace(/\.\.\.$/, "")}</p>
+      <span className="cargador-barra" aria-hidden="true" />
     </div>
   );
 }
