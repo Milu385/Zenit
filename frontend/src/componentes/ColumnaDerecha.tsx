@@ -1,9 +1,11 @@
-import type { ReactNode } from "react";
+import { useContext, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../api";
 import type { Activo, Proveedor } from "../contrato";
 import { datosProveedor, ESTADO_ACTIVO, ORDEN_ESTADO_ACTIVO } from "../formato";
 import { useSesion } from "../sesion";
 import { useCarga } from "../useCarga";
+import { RanuraDerecha } from "./ranura";
 
 // Columna azul de la derecha, como en todos los wireframes: arriba la
 // tarjeta "Inventario hibrido" y debajo lo propio de cada pantalla (la
@@ -110,14 +112,21 @@ export default function ConColumna({
   const r = useCarga((s) => (activos || !verActivos ? nunca() : api.activos(s)), [!!activos, verActivos], REFRESCO_MS);
   const lista = activos ?? (r.carga.estado === "listo" ? r.carga.datos : null);
   const hayInventario = verActivos && lista;
-  if (!hayInventario && !lateral) return <>{children}</>;
+  const ranura = useContext(RanuraDerecha);
+  const columna = (hayInventario || lateral) && (
+    <aside className="panel panel-azul columna-derecha" aria-label="Resumen de la infraestructura">
+      {hayInventario && <InventarioHibrido activos={lista} filtro={filtro} />}
+      {lateral}
+    </aside>
+  );
+  // la columna va a la ranura del marco (a lo alto de la ventana, quieta al
+  // bajar); fuera del marco se queda al lado del contenido. El contenido
+  // siempre va dentro del mismo div para que no se vuelva a montar cuando
+  // aparece la ranura o la columna.
   return (
-    <div className="rejilla-con-lateral">
+    <div className={ranura || !columna ? "rejilla-con-lateral sin-columna" : "rejilla-con-lateral"}>
       <div>{children}</div>
-      <aside className="panel panel-azul columna-derecha" aria-label="Resumen de la infraestructura">
-        {hayInventario && <InventarioHibrido activos={lista} filtro={filtro} />}
-        {lateral}
-      </aside>
+      {columna && (ranura ? createPortal(columna, ranura) : columna)}
     </div>
   );
 }

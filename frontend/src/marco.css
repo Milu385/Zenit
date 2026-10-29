@@ -718,3 +718,43 @@ button { font: inherit; }
 .resumen-hibrido .nota-filtro { color: var(--gris); }
 .tabla .detalle .sin-partir { white-space: nowrap; }
 .lista-activos-celda .detalle { white-space: nowrap; }
+
+/* =====================================================================
+   Columna azul a lo alto de la ventana (29 de octubre, tarde)
+   ===================================================================== */
+
+/* La columna azul de cada pantalla se pinta en la ranura del marco, a la
+   derecha de todo (ver componentes/ranura.ts). Como la barra negra: quieta al
+   bajar y del alto de la ventana, con el mismo margen arriba y abajo. Si la
+   pantalla no tiene columna, la ranura queda vacia y no ocupa lugar. */
+.rejilla-con-lateral.sin-columna { grid-template-columns: minmax(0, 1fr); }
+.ranura-derecha:empty { display: none; }
+.marco:has(> .ranura-derecha > .columna-derecha) {
+  grid-template-columns: 300px minmax(0, 1fr) 320px; padding-right: 24px;
+}
+.ranura-derecha { min-width: 0; }
+.ranura-derecha > .columna-derecha {
+  position: sticky; top: 24px; height: calc(100vh - 48px); min-height: 0; max-height: none;
+  display: flex; flex-direction: column; gap: 24px; padding: 20px 18px; border-radius: 24px;
+  overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.5) transparent;
+}
+@media (max-width: 1500px) {
+  .marco:has(> .ranura-derecha > .columna-derecha) { grid-template-columns: 240px minmax(0, 1fr) 264px; padding-right: 16px; }
+  .ranura-derecha > .columna-derecha { top: 16px; height: calc(100vh - 32px); padding: 16px 14px; gap: 18px; border-radius: 20px; }
+}
+/* en pantallas medianas no cabe al lado: pasa debajo del contenido, con su alto */
+@media (max-width: 1399px) {
+  .marco:has(> .ranura-derecha > .columna-derecha) { grid-template-columns: 240px minmax(0, 1fr); }
+  .ranura-derecha { grid-column: 2; }
+  .ranura-derecha > .columna-derecha { position: static; height: auto; overflow: visible; border-radius: var(--radio); }
+}
+@media (max-width: 820px) {
+  .marco:has(> .ranura-derecha > .columna-derecha) { grid-template-columns: 1fr; padding-right: 8px; }
+  .ranura-derecha { grid-column: auto; }
+}
+/* con la columna azul al lado, la cabecera es mas angosta: las pastillas de
+   estado se compactan para seguir en un solo renglon en un portatil */
+@media (max-width: 1500px) {
+  .marco:has(> .ranura-derecha > .columna-derecha) .indicadores li { padding: 5px 10px; font-size: 12px; gap: 6px; letter-spacing: 0; }
+  .marco:has(> .ranura-derecha > .columna-derecha) .indicadores .punto { width: 10px; height: 10px; }
+}

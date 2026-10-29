@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
 import type { Activo, Permiso } from "../contrato";
 import { Enlace, useRuta } from "../enrutador";
@@ -6,6 +6,7 @@ import { hace } from "../formato";
 import { NOMBRE_ROL, useSesion } from "../sesion";
 import { useCarga } from "../useCarga";
 import { IconoUsuario, Logo } from "./Iconos";
+import { RanuraDerecha } from "./ranura";
 // Iconos de seccion de Maria Lucia (carpeta "disenos zenit/Iconos secciones"):
 // amarillo sobre la barra negra y negro sobre la pastilla blanca de la activa
 import configuracionesAmarillo from "../recursos/iconos/configuraciones-amarillo.png";
@@ -122,6 +123,8 @@ export default function Marco({ titulo, children }: { titulo: string; children: 
     document.title = `${titulo} · Zenit`;
   }, [titulo]);
   const yo = sesion.estado === "dentro" ? sesion.yo : null;
+  // la columna azul de la pantalla (si tiene) se pinta aqui, al lado de todo
+  const [ranura, setRanura] = useState<HTMLDivElement | null>(null);
   return (
     <div className="marco">
       <a className="saltar" href="#contenido">
@@ -174,9 +177,10 @@ export default function Marco({ titulo, children }: { titulo: string; children: 
           {puede("activos:ver") && <Indicadores />}
         </header>
         <main id="contenido" className="contenido-pagina" tabIndex={-1}>
-          {children}
+          <RanuraDerecha.Provider value={ranura}>{children}</RanuraDerecha.Provider>
         </main>
       </div>
+      <div ref={setRanura} className="ranura-derecha" />
     </div>
   );
 }
