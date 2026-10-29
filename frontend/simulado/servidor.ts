@@ -84,7 +84,7 @@ const FECHA = /^\d{4}-\d{2}-\d{2}$/;
 const id = (m: RegExpMatchArray) => Number(m[1]);
 
 const RUTAS: Ruta[] = [
-  { metodo: "GET", patron: /^\/api\/salud$/, permiso: "publica", h: () => ({ estado: "ok", almacen: true }) },
+  { metodo: "GET", patron: /^\/api\/salud$/, permiso: "publica", h: () => ({ estado: "ok", almacen: true, analitico: true }) },
 
   // ---- sesion
   {
@@ -154,6 +154,25 @@ const RUTAS: Ruta[] = [
       const registros =
         escenario() === "vacio" ? [] : d.registrosDe(activo, desde, hasta, Number(url.searchParams.get("severidad_minima") ?? 0), url.searchParams.get("texto"));
       return { activo, desde: desde.toISOString(), hasta: hasta.toISOString(), registros };
+    },
+  },
+  {
+    metodo: "GET",
+    patron: /^\/api\/activos\/([^/]+)\/correlacion$/,
+    permiso: "registros:ver",
+    h: ({ url }, m) => {
+      const activo = decodeURIComponent(m[1]);
+      const hasta = fecha(url.searchParams.get("hasta"), new Date());
+      const desde = fecha(url.searchParams.get("desde"), new Date(hasta.getTime() - 3600_000));
+      const limite = Number(url.searchParams.get("limite") ?? 200);
+      const vacio = escenario() === "vacio";
+      return {
+        activo,
+        desde: desde.toISOString(),
+        hasta: hasta.toISOString(),
+        resumen: vacio ? { registros: 0, registros_error: 0, spans: 0, spans_error: 0 } : d.resumenAnaliticoDe(activo, desde, hasta),
+        registros: vacio ? [] : d.correlacionDe(activo, desde, hasta, limite),
+      };
     },
   },
   {

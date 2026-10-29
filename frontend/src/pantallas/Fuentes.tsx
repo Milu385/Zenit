@@ -70,7 +70,7 @@ function TablaFuentes({ fuentes }: { fuentes: Fuente[] }) {
                 {SENALES.map((s) => (
                   <th key={s} scope="col">
                     {NOMBRE_SENAL[s]}
-                    <span className="meta-dato">última vez · recibidas en 5 min</span>
+                    <span className="meta-dato">última vez · recibidas en 5 min · total</span>
                   </th>
                 ))}
               </tr>
@@ -103,6 +103,10 @@ function TablaFuentes({ fuentes }: { fuentes: Fuente[] }) {
                     return (
                       <td key={s} title={fechaHora(x.ultima_recepcion)}>
                         {hace(x.ultima_recepcion)} · {entero(x.recibidas_5min)}
+                        <span className="meta-dato">
+                          {entero(x.recibidas_total)} en total
+                          {x.errores_total > 0 ? ` · ${entero(x.errores_total)} errores en total` : ""}
+                        </span>
                         {x.errores_1h > 0 && <span className="meta-dato texto-mal">{entero(x.errores_1h)} errores en 1 h</span>}
                       </td>
                     );
@@ -187,6 +191,71 @@ const ESTADO_EJECUCION: Record<EjecucionDescubrimiento["estado"], { texto: strin
   en_curso: { texto: "En curso", simbolo: "…", clase: "insignia-sin_datos" },
 };
 
+function FilaEjecucion({ e }: { e: EjecucionDescubrimiento }) {
+  const est = ESTADO_EJECUCION[e.estado];
+  return (
+    <tr>
+      <th scope="row">{datosProveedor(e.proveedor).nombre}</th>
+      <td>
+        <span className={`insignia ${est.clase}`}>
+          <span aria-hidden="true">{est.simbolo}</span> {est.texto}
+        </span>
+        {e.error && <span className="meta-dato texto-mal">{e.error}</span>}
+      </td>
+      <td title={fechaHora(e.inicio)}>{hace(e.inicio)}</td>
+      <td>{e.fin ? duracion(e.inicio, e.fin) : "sigue"}</td>
+      <td>{entero(e.vistos)}</td>
+      <td>{entero(e.nuevos)}</td>
+      <td>{entero(e.retirados)}</td>
+      <td>{entero(e.reactivados)}</td>
+    </tr>
+  );
+}
+
+const CABECERA_EJECUCION = (
+  <thead>
+    <tr>
+      <th scope="col">Proveedor</th>
+      <th scope="col">Resultado</th>
+      <th scope="col">Empezó</th>
+      <th scope="col">Duró</th>
+      <th scope="col">Vistos</th>
+      <th scope="col">Nuevos</th>
+      <th scope="col">Retirados</th>
+      <th scope="col">Reactivados</th>
+    </tr>
+  </thead>
+);
+
+// Historial: las pasadas mas recientes de todos los proveedores juntos, la
+// mas nueva primero. Sirve para ver si un fallo es de una vez o se repite.
+function HistorialDescubrimiento({ d }: { d: Descubrimientos }) {
+  const recientes = d.recientes.slice().sort((a, b) => b.inicio.localeCompare(a.inicio));
+  if (recientes.length === 0) return null;
+  const fallidas = recientes.filter((e) => e.estado === "error").length;
+  return (
+    <section className="panel panel-blanco" aria-labelledby="titulo-historial">
+      <h2 id="titulo-historial">
+        Pasadas recientes del descubrimiento <span className="cuenta">{recientes.length}</span>
+      </h2>
+      <p className="nota">
+        Todos los proveedores, la más reciente primero{fallidas ? `; ${fallidas} ${fallidas === 1 ? "falló" : "fallaron"}` : ""}.
+      </p>
+      <div className="tabla-contenedor tabla-alta">
+        <table className="tabla">
+          <caption className="solo-lector">Historial de ejecuciones del descubrimiento</caption>
+          {CABECERA_EJECUCION}
+          <tbody>
+            {recientes.map((e) => (
+              <FilaEjecucion key={e.id} e={e} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function TablaDescubrimiento({ d }: { d: Descubrimientos }) {
   const ultimas = d.ultimas.slice().sort((a, b) => a.proveedor.localeCompare(b.proveedor));
   return (
@@ -198,39 +267,11 @@ function TablaDescubrimiento({ d }: { d: Descubrimientos }) {
         <div className="tabla-contenedor">
           <table className="tabla">
             <caption className="solo-lector">La última ejecución del descubrimiento en cada proveedor</caption>
-            <thead>
-              <tr>
-                <th scope="col">Proveedor</th>
-                <th scope="col">Resultado</th>
-                <th scope="col">Empezó</th>
-                <th scope="col">Duró</th>
-                <th scope="col">Vistos</th>
-                <th scope="col">Nuevos</th>
-                <th scope="col">Retirados</th>
-                <th scope="col">Reactivados</th>
-              </tr>
-            </thead>
+            {CABECERA_EJECUCION}
             <tbody>
-              {ultimas.map((e) => {
-                const est = ESTADO_EJECUCION[e.estado];
-                return (
-                  <tr key={e.id}>
-                    <th scope="row">{datosProveedor(e.proveedor).nombre}</th>
-                    <td>
-                      <span className={`insignia ${est.clase}`}>
-                        <span aria-hidden="true">{est.simbolo}</span> {est.texto}
-                      </span>
-                      {e.error && <span className="meta-dato texto-mal">{e.error}</span>}
-                    </td>
-                    <td title={fechaHora(e.inicio)}>{hace(e.inicio)}</td>
-                    <td>{e.fin ? duracion(e.inicio, e.fin) : "sigue"}</td>
-                    <td>{entero(e.vistos)}</td>
-                    <td>{entero(e.nuevos)}</td>
-                    <td>{entero(e.retirados)}</td>
-                    <td>{entero(e.reactivados)}</td>
-                  </tr>
-                );
-              })}
+              {ultimas.map((e) => (
+                <FilaEjecucion key={e.id} e={e} />
+              ))}
             </tbody>
           </table>
         </div>
@@ -275,7 +316,12 @@ export default function Fuentes() {
           {(x) => <TablaHuerfanos huerfanas={x} />}
         </SegunCarga>
         <SegunCarga r={d} que="el descubrimiento">
-          {(x) => <TablaDescubrimiento d={x} />}
+          {(x) => (
+            <>
+              <TablaDescubrimiento d={x} />
+              <HistorialDescubrimiento d={x} />
+            </>
+          )}
         </SegunCarga>
         {puede("diagnostico:consumo") && <ConsumoDiagnostico />}
       </ConColumna>

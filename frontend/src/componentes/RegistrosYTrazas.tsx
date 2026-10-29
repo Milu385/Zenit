@@ -4,6 +4,7 @@ import type { Registro, ResumenTraza, Span } from "../contrato";
 import { useRuta } from "../enrutador";
 import { fechaHora, hace } from "../formato";
 import { useCarga } from "../useCarga";
+import TablaCorrelacion from "./Correlacion";
 import { SinDatos } from "./Estados";
 import SegunCarga from "./SegunCarga";
 
@@ -37,6 +38,8 @@ const ms = (ns: number) => {
   const v = ns / 1e6;
   return v >= 1000 ? `${(v / 1000).toLocaleString("es-CO", { maximumFractionDigits: 2 })} s` : `${v.toLocaleString("es-CO", { maximumFractionDigits: 1 })} ms`;
 };
+
+const entero = (n: number) => n.toLocaleString("es-CO");
 
 const hora = (iso: string) => new Date(iso).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
@@ -218,6 +221,7 @@ export default function RegistrosYTrazas({ activo }: { activo: string }) {
     [activo, ventana, severidad, buscar],
   );
   const tra = useCarga((s) => api.trazas(activo, ventana.desde, ventana.hasta, soloErrores, s), [activo, ventana, soloErrores]);
+  const cor = useCarga((s) => api.correlacion(activo, ventana.desde, ventana.hasta, 200, s), [activo, ventana]);
 
   const verTraza = (id: string) => {
     setTraza(id);
@@ -286,6 +290,25 @@ export default function RegistrosYTrazas({ activo }: { activo: string }) {
         {(d) => <TablaTrazas trazas={d.trazas} elegida={traza} verTraza={verTraza} />}
       </SegunCarga>
       {traza && <DetalleTraza key={traza} id={traza} activo={activo} cerrar={() => setTraza(null)} />}
+
+      <h4 id="titulo-correlacion">Registros con su traza</h4>
+      <SegunCarga r={cor} que="la correlación de registros y trazas">
+        {(d) => (
+          <>
+            <p className="nota">
+              Cada registro de la ventana unido con el span que lo produjo. En la ventana: {entero(d.resumen.registros)} registros (
+              {entero(d.resumen.registros_error)} de error) y {entero(d.resumen.spans)} spans ({entero(d.resumen.spans_error)} con error).
+            </p>
+            <TablaCorrelacion
+              filas={d.registros}
+              activo={activo}
+              verTraza={verTraza}
+              vacio={{ titulo: "Sin registros en la ventana", detalle: "El activo no envió registros en esta ventana." }}
+            />
+            {d.registros.length === 200 && <p className="nota">Se muestran los 200 más recientes. Acorta la ventana para ver otros.</p>}
+          </>
+        )}
+      </SegunCarga>
     </section>
   );
 }

@@ -3,6 +3,7 @@ import type { EvidenciaIncidente, MetricaEvidencia } from "../contrato";
 import { Enlace } from "../enrutador";
 import { fechaHora, formatoValor, nombreMetrica } from "../formato";
 import { useCarga } from "../useCarga";
+import TablaCorrelacion from "./Correlacion";
 import { SinDatos } from "./Estados";
 import SegunCarga from "./SegunCarga";
 
@@ -201,6 +202,27 @@ function Trazas({ e }: { e: EvidenciaIncidente }) {
   );
 }
 
+function Correlacion({ e }: { e: EvidenciaIncidente }) {
+  return (
+    <section className="bloque-evidencia" aria-labelledby="titulo-ev-correlacion">
+      <h4 id="titulo-ev-correlacion">Registros con su traza</h4>
+      <p className="meta">
+        Registros de error, o producidos por un span que terminó con error, unidos con ese span. Es la misma consulta con la que se
+        arma la evidencia que recibe el diagnóstico.
+      </p>
+      {sinAnalitico(e) ? (
+        <SinDatos titulo={NO_SE_PUDO} detalle="El almacén de registros y trazas no respondió; ver el aviso de arriba." />
+      ) : (
+        <TablaCorrelacion
+          filas={e.correlacion}
+          activo={e.activo}
+          vacio={{ titulo: "Ningún registro de error se pudo unir con su span", detalle: "En la ventana no hubo registros de error ni spans con error que los produjeran." }}
+        />
+      )}
+    </section>
+  );
+}
+
 // "registros y trazas: el almacen analitico no esta configurado" -> "registros y trazas"
 const fuente = (f: string) => f.split(":")[0].trim();
 
@@ -223,6 +245,7 @@ export default function EvidenciaSenales({ id }: { id: number }) {
             <Metricas e={e} />
             <Registros e={e} />
             <Trazas e={e} />
+            <Correlacion e={e} />
           </>
         )}
       </SegunCarga>

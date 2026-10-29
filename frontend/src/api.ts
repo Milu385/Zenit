@@ -18,6 +18,7 @@ import type {
   PeticionSesion,
   ReporteCostos,
   RespuestaRegistros,
+  RespuestaCorrelacion,
   RespuestaTraza,
   RespuestaTrazas,
   RespuestaDimensiones,
@@ -25,6 +26,7 @@ import type {
   RespuestaSerie,
   RespuestaSesion,
   ResumenImportacion,
+  Salud,
   Yo,
 } from "./contrato";
 
@@ -105,6 +107,7 @@ export const api = {
   // sesion
   iniciarSesion: (p: PeticionSesion) => pedir<RespuestaSesion>("/api/sesion", { metodo: "POST", ...json(p) }),
   yo: (s?: AbortSignal) => pedir<Yo>("/api/yo", { senal: s }),
+  salud: (s?: AbortSignal) => pedir<Salud>("/api/salud", { senal: s }),
 
   // activos y series
   activos: (s?: AbortSignal) => pedir<Activo[]>("/api/activos", { senal: s }),
@@ -148,6 +151,10 @@ export const api = {
     return pedir<RespuestaTrazas>(`/api/activos/${c(activo)}/trazas?${q}`, { senal: s });
   },
   traza: (id: string, s?: AbortSignal) => pedir<RespuestaTraza>(`/api/trazas/${c(id)}`, { senal: s }),
+  correlacion: (activo: string, desde: Date, hasta: Date, limite = 200, s?: AbortSignal) => {
+    const q = new URLSearchParams({ desde: desde.toISOString(), hasta: hasta.toISOString(), limite: String(limite) });
+    return pedir<RespuestaCorrelacion>(`/api/activos/${c(activo)}/correlacion?${q}`, { senal: s });
+  },
 
   // incidentes
   incidentes: (filtro: { activo?: string } = {}, s?: AbortSignal) => {

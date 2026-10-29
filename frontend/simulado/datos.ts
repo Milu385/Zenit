@@ -20,7 +20,7 @@ import type {
   Rol,
   Span,
 } from "../src/contrato";
-import type { EvidenciaIncidente, MetricaEvidencia } from "../src/contrato"; // H-039
+import type { CorrelacionEvidencia, EvidenciaIncidente, MetricaEvidencia } from "../src/contrato"; // H-039
 import type { ConsumoDiagnostico } from "../src/contrato"; // H-042
 import type { AnalisisCostos } from "../src/contrato"; // H-047, fuera del contrato
 
@@ -238,6 +238,38 @@ export function registrosDe(activo: string, desde: Date, hasta: Date, severidadM
     .filter((r) => r.severidad_num >= severidadMinima && (!texto || r.cuerpo.toLowerCase().includes(texto.toLowerCase())))
     .sort((a, b) => b.momento.localeCompare(a.momento))
     .slice(0, 200);
+}
+
+// La misma union que hace el backend (analitico.correlacion): cada registro
+// con el span que tiene su traza_id y su span_id; sin span, campos en null.
+export function correlacionDe(activo: string, desde: Date, hasta: Date, limite = 200): CorrelacionEvidencia[] {
+  return registrosDe(activo, desde, hasta, 0, null)
+    .slice(0, limite)
+    .map((r) => {
+      const t = Math.floor(new Date(r.momento).getTime() / PASO_TRAZA) * PASO_TRAZA;
+      const span = r.traza_id ? spansDe(activo, t).find((x) => x.span_id === r.span_id) : undefined;
+      return {
+        momento: r.momento,
+        servicio: r.service_name,
+        severidad: r.severidad,
+        cuerpo: r.cuerpo,
+        traza_id: r.traza_id,
+        operacion: span?.nombre ?? null,
+        duracion_ns: span?.duracion_ns ?? null,
+        estado_span: span?.estado ?? null,
+      };
+    });
+}
+
+export function resumenAnaliticoDe(activo: string, desde: Date, hasta: Date) {
+  const regs = registrosDe(activo, desde, hasta, 0, null);
+  const ts = momentosTraza(desde, hasta);
+  return {
+    registros: regs.length,
+    registros_error: regs.filter((r) => r.severidad_num >= 17).length,
+    spans: ts.length * 4,
+    spans_error: ts.filter(conError).length * 2,
+  };
 }
 
 // ------------------------------------------------------------- incidentes
@@ -526,7 +558,13 @@ export function evidenciaIncidente(id: number): EvidenciaIncidente | null {
     metricas_relacionadas: ev.metricas_relacionadas,
     registros_error: registros,
     trazas_error: trazas,
-    correlacion: [],
+    // como el backend: solo los de error o con span con error, hasta 30
+    correlacion:
+      sinAnalitico || vacio
+        ? []
+        : correlacionDe(b.activo, desdeReg, hastaReg)
+            .filter((f) => f.estado_span === "error" || /^(ERROR|FATAL)/i.test(f.severidad))
+            .slice(0, 30),
     conteos: sinAnalitico ? null : { registros: registros.length * 40 + 120, registros_error: registros.length, spans: 900, spans_error: trazas.length * 2 },
     faltantes: sinAnalitico ? ["registros y trazas: ClickHouse no respondio (simulado)"] : [],
   };

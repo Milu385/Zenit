@@ -87,6 +87,7 @@ Desde la pantalla de costos, con un rol que tenga `costos:importar`. Otra opció
 - **El texto lleva el estado, además del color.** Los estados de activo e incidente llevan símbolo, texto y color a la vez, y la severidad alta va subrayada.
 - **Datos desactualizados.** Si un refresco falla y ya había datos, se siguen mostrando con su hora y un aviso con botón de reintentar, en vez de cambiarlos por un error (`useCarga`).
 - **Columna azul a la derecha en todas las secciones** (`componentes/ColumnaDerecha.tsx`), como en los wireframes: arriba "Inventario híbrido" (sale de `GET /api/activos`; sin `activos:ver` no se muestra) y debajo lo propio de cada pantalla. "Cambios recientes" no se trae: la API no tiene un registro de cambios, y quién marcó un incidente solo sale en el detalle de cada uno.
+- **Estado de los almacenes en la cabecera** (`GET /api/salud`): una cuarta pastilla dice si responden las métricas (InfluxDB) y los registros y trazas (ClickHouse). Antes solo se notaba cuando una pantalla fallaba con 503.
 
 ### Sesión (pantalla 9)
 
@@ -122,6 +123,7 @@ Desde la pantalla de costos, con un rol que tenga `costos:importar`. Otra opció
 - **La gráfica de la evidencia abre filtrada** con las dimensiones del incidente (`filtro=device:sda1&filtro=direction:write`), solo en la métrica que se desvió y solo con las dimensiones que la métrica tiene; una casilla las quita. Las acumuladas se dibujan como tasa por segundo calculada en la interfaz; un salto negativo (contador reiniciado) se descarta.
 - **Un falso positivo no "sigue":** la duración llega hasta el fin o, si no tiene, hasta que se descartó.
 - **Cada cita lleva a su evidencia (H-051).** Debajo de la hipótesis se listan las citas con su métrica e intervalo; al pulsar una se dibuja esa serie. Si una cita no trae un intervalo legible se usa la ventana del detector y se dice.
+- **Registros con su traza.** La evidencia ya traía `correlacion` (los registros de error, o de un span con error, unidos con ese span: lo mismo que recibe el diagnóstico) y no se mostraba; ahora va como última tabla de la evidencia. En el detalle del activo, la misma tabla sale de `GET /api/activos/{id}/correlacion` para la ventana elegida, con los conteos de registros y spans.
 - **Versión del modelo sin protagonismo.** La del detector (`version_modelo`) va en letra pequeña junto al método; la del diagnóstico, al pie de la hipótesis.
 - **Quién marcó.** Si el incidente se confirmó o descartó, la cabecera dice quién y cuándo (`marcada_por`, `marcada_en`).
 - **Sin servicio de diagnóstico.** Mientras no exista `POST /diagnostico` (H-040), pedir una hipótesis dice que el servicio no está disponible y la evidencia se ve igual.
@@ -139,6 +141,7 @@ Desde la pantalla de costos, con un rol que tenga `costos:importar`. Otra opció
 - **Fuentes que no reportan.** Por defecto solo las degradadas (más de 5 min sin métricas, regla de la API) y las que nunca reportaron; una casilla muestra también las sanas. Por señal: última recepción, recibidas en 5 min y errores de la última hora.
 - **Huérfanos.** Origen (clave y tipo), proveedor declarado, volumen acumulado por señal, última recepción y si ya es asociable o ya se asoció. Los asociados se ven atenuados.
 - **Descubrimiento.** La última pasada por proveedor con su resultado (texto y símbolo), duración y conteos; si falló, el error.
+- **Historial del descubrimiento** (`recientes` de `/api/catalogo/descubrimientos`) debajo de la última pasada, para ver si un fallo se repite. En las fuentes, cada señal muestra también lo recibido y los errores en total (`recibidas_total`, `errores_total`).
 
 ### Configuraciones (pantalla 5, como tabla)
 

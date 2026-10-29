@@ -44,6 +44,36 @@ function saludo(d: Date) {
 
 const REFRESCO_INDICADORES_MS = 30_000;
 
+// GET /api/salud: si responden el almacen de series (InfluxDB) y el de
+// registros y trazas (ClickHouse). Antes solo se notaba cuando una pantalla
+// fallaba con 503; asi se ve en la cabecera, en todas las pantallas.
+function Almacenes() {
+  const r = useCarga((s) => api.salud(s), [], REFRESCO_INDICADORES_MS);
+  if (r.carga.estado === "error")
+    return (
+      <li className="malo">
+        <span className="punto" aria-hidden="true" />
+        La API no responde
+      </li>
+    );
+  if (r.carga.estado !== "listo") return null;
+  const { almacen, analitico } = r.carga.datos;
+  const caidos = [!almacen && "métricas", analitico === false && "registros y trazas"].filter(Boolean);
+  if (caidos.length)
+    return (
+      <li className="malo" title="GET /api/salud">
+        <span className="punto" aria-hidden="true" />
+        Sin responder: <b>{caidos.join(" y ")}</b>
+      </li>
+    );
+  return (
+    <li className={analitico === undefined ? "regular" : "bueno"} title={analitico === undefined ? "Registros y trazas: el almacén no está configurado" : "Métricas, registros y trazas responden"}>
+      <span className="punto" aria-hidden="true" />
+      {analitico === undefined ? "Registros sin configurar" : "Almacenes respondiendo"}
+    </li>
+  );
+}
+
 function Indicadores() {
   const r = useCarga((s) => api.activos(s), [], REFRESCO_INDICADORES_MS);
   if (r.carga.estado !== "listo") return null;
@@ -71,6 +101,7 @@ function Indicadores() {
         <span className="punto" aria-hidden="true" />
         Última recepción <b>{hace(ultima ?? null)}</b>
       </li>
+      <Almacenes />
       {r.desactualizado && <li className="regular">Indicadores sin actualizar</li>}
     </ul>
   );

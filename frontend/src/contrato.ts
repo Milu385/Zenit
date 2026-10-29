@@ -206,6 +206,16 @@ export type CorrelacionEvidencia = {
   duracion_ns: number | null;
   estado_span: string | null;
 };
+// GET /api/activos/{activo}/correlacion?desde&hasta&limite (RF-ALM-07): los
+// registros del activo unidos con el span que los produjo, y los conteos.
+export type RespuestaCorrelacion = {
+  activo: string;
+  desde: string;
+  hasta: string;
+  resumen: ConteosEvidencia;
+  registros: CorrelacionEvidencia[];
+};
+
 export type EvidenciaIncidente = {
   incidente: number;
   activo: string;
@@ -375,6 +385,12 @@ export type Inyeccion = {
   causa_en: string | null;
   manifiesta_en: string | null;
 };
+
+// ------------------------------------------------------------ sistema
+
+// GET /api/salud (publica): si responden los almacenes. `analitico` no viene
+// cuando la plataforma no tiene ClickHouse configurado.
+export type Salud = { estado: string; almacen: boolean; analitico?: boolean };
 
 // ------------------------------------------------------------ errores (§1)
 export type ErrorRespuesta = { detail: string };
