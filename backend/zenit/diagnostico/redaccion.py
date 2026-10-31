@@ -11,7 +11,16 @@ reemplaza en cada texto:
   IP v4 y v6 ([IP_n]), ids nativos `proveedor:tipo/id` (azure:vm/..., aws:
   instancia/i-..., digitalocean:droplet/..., proxmox:qemu/...), ids de
   instancia de AWS, GUID y rutas de recurso de Azure ([ID_n]), y nombres de
-  anfitrion internos de EC2 como ip-10-0-3-17.ec2.internal ([ANFITRION_n]).
+  anfitrion internos de EC2 como ip-10-0-3-17.ec2.internal ([ANFITRION_n]);
+- los correos electronicos ([CORREO_n]);
+- los secretos ([SECRETO_n]): tokens JWT, lo que sigue a "Bearer", claves de
+  Anthropic (sk-ant-...), el valor de clave=, password=, token=, api_key=,
+  secret= y parecidos (con = o :), y el valor de un campo de diccionario con
+  uno de esos nombres.
+
+Un secreto nunca entra al mapa: `restaurar` no lo devuelve, ni siquiera en la
+hipotesis que se muestra en la interfaz. Lo que el modelo escriba sobre el
+secreto se queda con el marcador.
 
 Reglas:
 - El mismo valor recibe siempre el mismo marcador dentro de una redaccion, y
@@ -33,12 +42,27 @@ import ipaddress
 import re
 from typing import Any
 
-TIPOS = ("ACTIVO", "ANFITRION", "ID", "IP")
-_MARCADOR = re.compile(r"\[(?:ACTIVO|ANFITRION|ID|IP)_\d+\]")
+TIPOS = ("ACTIVO", "ANFITRION", "ID", "IP", "CORREO", "SECRETO")
+_MARCADOR = re.compile(r"\[(?:ACTIVO|ANFITRION|ID|IP|CORREO|SECRETO)_\d+\]")
+NO_SE_RESTAURA = {"SECRETO"}
+
+# Nombres de campo cuyo valor es un secreto, en "nombre=valor", "nombre: valor"
+# o como clave de un diccionario.
+_NOMBRE_SECRETO = r"(?:clave|contrase(?:n|ñ)a|password|passwd|pwd|token|access[_-]?token|refresh[_-]?token|api[_-]?key|apikey|x-api-key|secret|secreto|client[_-]?secret|access[_-]?key)"
+_CAMPO_SECRETO = re.compile(rf"^{_NOMBRE_SECRETO}$", re.IGNORECASE)
+# Se buscan antes que lo demas, para que un JWT o un token no se parta en ids o IP.
+_SECRETOS = [
+    # nombre=valor, nombre: valor, "nombre": "valor"; se redacta solo el valor
+    re.compile(rf"(?P<pre>(?<![\w-]){_NOMBRE_SECRETO}[\"']?\s*[:=]\s*[\"']?)(?P<valor>[^\s\"',;&)}}\]]+)", re.IGNORECASE),
+    re.compile(r"(?P<pre>\bBearer\s+)(?P<valor>[A-Za-z0-9._~+/=-]+)", re.IGNORECASE),
+    re.compile(r"(?P<pre>)(?P<valor>\beyJ[\w-]*\.eyJ[\w-]*\.[\w-]*)"),        # JWT
+    re.compile(r"(?P<pre>)(?P<valor>\bsk-ant-[\w-]{8,})"),                       # clave de Anthropic
+]
 
 # Lo que se reconoce por su forma. El orden importa solo cuando dos patrones
 # empiezan en el mismo lugar: el primero que coincide gana.
 _PATRONES = [
+    ("CORREO", r"[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"),                        # correo
     ("ID", r"(?:aws|azure|digitalocean|proxmox|onprem|gcp):[A-Za-z][\w-]*/[\w./-]*[\w]"),   # clave nativa
     ("ID", r"/subscriptions/[0-9a-fA-F-]{36}(?:/[\w.()-]+)*"),                            # recurso de Azure
     ("ID", r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"),  # GUID
@@ -81,7 +105,8 @@ class _Redactor:
             self._cuenta[tipo] = self._cuenta.get(tipo, 0) + 1
             m = f"[{tipo}_{self._cuenta[tipo]}]"
             self._marcador_de[clave] = m
-            self.mapa[m] = original
+            if tipo not in NO_SE_RESTAURA:
+                self.mapa[m] = original
         return m
 
     def _reemplazo(self, coincidencia: re.Match) -> str:
@@ -105,18 +130,30 @@ class _Redactor:
             return self.marcador(texto, "IP")
         return self.marcador(texto, tipo)
 
-    def texto(self, s: str) -> str:
+    def _secretos(self, s: str) -> str:
+        for patron in _SECRETOS:
+            s = patron.sub(lambda m: m.group("pre") + (m.group("valor") if _MARCADOR.fullmatch(m.group("valor"))
+                                                       else self.marcador(m.group("valor"), "SECRETO")), s)
+        return s
+
+    def _por_tramos(self, s: str, f) -> str:
         # los marcadores que ya estan (por ejemplo, de una redaccion anterior) no se vuelven a tocar
         trozos = _MARCADOR.split(s)
         marcas = _MARCADOR.findall(s)
-        salida = [self._re.sub(self._reemplazo, t) for t in trozos]
+        salida = [f(t) for t in trozos]
         return "".join(x for par in zip(salida, marcas + [""]) for x in par)
 
-    def recorrer(self, o: Any) -> Any:
+    def texto(self, s: str) -> str:
+        s = self._por_tramos(s, self._secretos)
+        return self._por_tramos(s, lambda t: self._re.sub(self._reemplazo, t))
+
+    def recorrer(self, o: Any, campo: str = "") -> Any:
         if isinstance(o, str):
+            if campo and _CAMPO_SECRETO.match(campo) and o.strip() and not _MARCADOR.fullmatch(o):
+                return self.marcador(o, "SECRETO")     # {"password": "..."}: el valor entero es secreto
             return self.texto(o)
         if isinstance(o, dict):
-            return {k: self.recorrer(v) for k, v in o.items()}
+            return {k: self.recorrer(v, str(k)) for k, v in o.items()}
         if isinstance(o, (list, tuple)):
             return [self.recorrer(v) for v in o]
         return o   # numeros, booleanos, None y fechas ya serializadas como texto se tratan arriba
@@ -134,7 +171,7 @@ def redactar(evidencia: Any, conocidos: dict[str, str]) -> tuple[Any, dict[str, 
 
 def restaurar(texto: str, mapa: dict[str, str]) -> str:
     """Devuelve los nombres reales a un texto del modelo. Un marcador que no
-    esta en el mapa (el modelo lo invento) se deja como vino."""
+    esta en el mapa (el modelo lo invento, o es un [SECRETO_n]) se deja como vino."""
     if not texto or not mapa:
         return texto
     return _MARCADOR.sub(lambda m: mapa.get(m.group(0), m.group(0)), texto)

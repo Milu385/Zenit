@@ -4,3 +4,8 @@
 75aa32af8bd227c22d9989d7c9204641a86aa2cb:backend/zenit/descubrimiento/__main__.py:generic-api-key:63
 #   DO_TOKEN= vacio y DO_ETIQUETA=zenit-nodo en la plantilla .env.example
 71f9a7b6b1766a08a3d5712f41e0336c5079e4f6:deploy/.env.example:generic-api-key:43
+#   Datos falsos de las pruebas de la redaccion (H-041, correos y secretos): un
+#   JWT de juguete y "api_key: 9f8e7d6c5b4a" en una linea de registro inventada.
+#   Revisados el 2026-10-31; existen para comprobar que NO salen hacia el modelo.
+dba775205a6b0e683e02cdf20a0979784a39dc87:backend/pruebas/test_redaccion.py:jwt:138
+dba775205a6b0e683e02cdf20a0979784a39dc87:backend/pruebas/test_redaccion.py:generic-api-key:146
