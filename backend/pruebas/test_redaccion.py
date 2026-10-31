@@ -172,3 +172,12 @@ def test_lo_que_parece_campo_secreto_pero_no_lo_es_no_se_toca():
     ev = ["tokens_entrada: 1800", "la clave del catalogo es el id del activo", "Bearer", "token_count=3"]
     enviado, _ = redactar(ev, {})
     assert enviado[:3] == ev[:3]
+
+
+def test_correo_y_jwt_en_el_mismo_registro_y_las_fechas_quedan():
+    linea = (f"2026-10-27T13:20:00 ERROR login fallido de ana.gomez@empresa.co con Authorization: Bearer {JWT} "
+             "desde 10.0.3.17")
+    enviado, mapa = redactar(linea, {})
+    assert enviado == "2026-10-27T13:20:00 ERROR login fallido de [CORREO_1] con Authorization: Bearer [SECRETO_1] desde [IP_1]"
+    assert restaurar(enviado, mapa) == ("2026-10-27T13:20:00 ERROR login fallido de ana.gomez@empresa.co con "
+                                        "Authorization: Bearer [SECRETO_1] desde 10.0.3.17")
