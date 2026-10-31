@@ -124,3 +124,51 @@ def test_lo_que_compacta_h040_sale_sin_identificadores():
     texto = _todo(enviado)
     assert "activo-aws-nodo-01" not in texto and "zenit-nodo-aws" not in texto and "172.18.0.4" not in texto
     assert "system_cpu_utilization" in texto and "2026-10-20T12:00:00+00:00" in texto
+
+
+# ------------------------------------------------------------------ correos y secretos
+def test_correos_se_redactan_y_se_restauran():
+    enviado, mapa = redactar(["fallo al notificar a ops@zenit.co y a Daniel.Perez+alertas@empresa.com.co",
+                              "otra vez ops@zenit.co"], {})
+    assert enviado[0] == "fallo al notificar a [CORREO_1] y a [CORREO_2]"
+    assert enviado[1] == "otra vez [CORREO_1]"
+    assert restaurar("avisar a [CORREO_1]", mapa) == "avisar a ops@zenit.co"
+
+
+JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJkYW5pZWwifQ.dGhpcy1pcy1hLXNpZ25hdHVyZQ"
+
+
+def test_secretos_se_redactan_y_nunca_se_restauran():
+    textos = [
+        f"Authorization: Bearer {JWT}",
+        f"token suelto {JWT} en el registro",
+        "ANTHROPIC_API_KEY=sk-ant-api03-AbCdEf123456_xyz",
+        "conectando con password=Sup3rS3creta! y api_key: 9f8e7d6c5b4a",
+        '{"clave": "zenit2026", "token":"abc.def"}',
+        "client_secret = 'n0-v4-a-s4lir'",
+    ]
+    enviado, mapa = redactar(textos, {})
+    texto = json.dumps(enviado)
+    for secreto in (JWT, "sk-ant-api03-AbCdEf123456_xyz", "Sup3rS3creta!", "9f8e7d6c5b4a", "zenit2026", "abc.def",
+                    "n0-v4-a-s4lir"):
+        assert secreto not in texto, secreto
+    assert enviado[0] == "Authorization: Bearer [SECRETO_1]"
+    assert enviado[1] == "token suelto [SECRETO_1] en el registro"          # el mismo JWT, el mismo marcador
+    assert enviado[2] == "ANTHROPIC_API_KEY=[SECRETO_2]"
+    assert enviado[3] == "conectando con password=[SECRETO_3] y api_key: [SECRETO_4]"
+    assert not any(m.startswith("[SECRETO") for m in mapa)                # nunca entran al mapa
+    assert restaurar("la clave [SECRETO_3] quedo en el registro", mapa) == "la clave [SECRETO_3] quedo en el registro"
+
+
+def test_el_valor_de_un_campo_secreto_se_redacta_entero():
+    enviado, mapa = redactar({"usuario": "daniel", "password": "una clave con espacios", "tokens_entrada": 1800,
+                              "Token": "abc"}, {})
+    assert enviado["password"] == "[SECRETO_1]" and enviado["Token"] == "[SECRETO_2]"
+    assert enviado["usuario"] == "daniel" and enviado["tokens_entrada"] == 1800
+    assert mapa == {}
+
+
+def test_lo_que_parece_campo_secreto_pero_no_lo_es_no_se_toca():
+    ev = ["tokens_entrada: 1800", "la clave del catalogo es el id del activo", "Bearer", "token_count=3"]
+    enviado, _ = redactar(ev, {})
+    assert enviado[:3] == ev[:3]
