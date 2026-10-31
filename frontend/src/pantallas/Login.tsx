@@ -105,6 +105,9 @@ export default function Login({ motivo }: { motivo?: string }) {
           <button type="submit" className="boton-primario" disabled={enviando}>
             {enviando ? "Entrando..." : "Iniciar sesión"}
           </button>
+          <p className="login-legal">
+            Al entrar aceptas la <a href="/privacidad">Política de tratamiento de datos</a>.
+          </p>
           <p className="login-pie">Las cuentas las crea el administrador de Zenit.</p>
         </form>
       </section>
