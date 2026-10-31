@@ -248,7 +248,9 @@ function Contenido({ d, actualizar }: { d: Detalle; actualizar: (d: Detalle) => 
             <>
               <p className="hipotesis-texto">{d.diagnostico.texto}</p>
               <p className="advertencia">
-                Es una posible explicación generada por un modelo, no una conclusión. Revisa la evidencia antes de actuar.
+                Es una posible explicación generada por un modelo de lenguaje externo (Anthropic, en Estados Unidos) a partir
+                de evidencia con los identificadores reemplazados. No es una conclusión, y Zenit no ejecuta ninguna acción
+                por su cuenta. Revisa la evidencia antes de actuar.
               </p>
               {citadas > 0 && (
                 <>
