@@ -13,6 +13,6 @@ Por cada tarea se anota: éxito (sí, con ayuda o no), tiempo en segundos y come
 | 5 | 6 Costos (rol finanzas) | "¿Cuál es el activo en la nube que más costó este mes?" | Nombra el activo con el mayor costo de la tabla del periodo | 2 min |
 
 Notas para el facilitador:
-- **Antes de cada sesión:** que haya al menos un activo degradado y un incidente abierto de severidad alta con hipótesis. En Azure se puede provocar con el inyector (`python -m inyector manual cpu ...`). Anotar el número del incidente usado en cada sesión.
+- **Antes de cada sesión:** que haya al menos un activo degradado y un incidente abierto de severidad alta con hipótesis. En Azure se provoca con una **inyección de disco**, no de CPU: con el detector mad-v2, una de CPU no llega a severidad alta (`docker compose exec inyector python -m inyector manual disco --modo abrupto --objetivo 0.85 --duracion 900`). Anotar el número del incidente usado en cada sesión.
 - **Tarea 4:** cambia los datos, así que con cada participante se usa un incidente distinto. Otra opción es que Juan José lo vuelva a abrir en la base entre una sesión y otra.
 - **No se dice el nombre de los botones ni de las secciones.** Si el participante pregunta "¿dónde está…?", se responde "¿dónde lo buscarías?".
